@@ -149,6 +149,14 @@ export interface Proposal {
 // nexafix-dispatch Supabase project, surfaced here via the
 // dispatch-agent-activity edge function. See README for the two-system split. ----
 
+export interface DispatchTechnicianSummary {
+  id: string
+  name: string
+  company: string | null
+  phone: string | null
+  status: string | null
+}
+
 export interface DispatchOrderSummary {
   id: string
   title: string
@@ -158,6 +166,7 @@ export interface DispatchOrderSummary {
   status: string
   updated_at: string
   assigned_technician: { name: string; company: string | null; phone: string | null } | null
+  technicians: DispatchTechnicianSummary[]
 }
 
 export interface DispatchCallEventSummary {
@@ -185,6 +194,22 @@ export interface DispatchActivity {
   events: DispatchCallEventSummary[]
   alerts: DispatchAlertSummary[]
   fetched_at: string
+}
+
+// ---- Writes into Raley, via the raley-actions edge function. See that
+// function's header comment for why this proxies Raley's own API instead of
+// reimplementing it. ----
+
+export interface NewDispatchOrder {
+  title: string
+  location: string
+  trade?: string
+  description?: string
+  urgency?: 'Routine' | 'Priority' | 'Emergency'
+  repair_ceiling: number
+  assessment_target?: number | null
+  ground_rules?: string
+  auto_dispatch?: boolean
 }
 
 export const STATUS_OPTIONS = [

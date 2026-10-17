@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
         .limit(ORDERS_LIMIT),
       dispatch
         .from('ai_dispatch_technicians')
-        .select('id, order_id, name, company, phone'),
+        .select('id, order_id, name, company, phone, status'),
       dispatch
         .from('ai_dispatch_call_events')
         .select('id, order_id, technician_id, provider, event_type, ended_reason, duration_seconds, summary, created_at')
@@ -126,6 +126,12 @@ Deno.serve(async (req) => {
               return { name: t.name, company: t.company ?? null, phone: t.phone ?? null }
             })()
           : null,
+        // Every technician Raley has sourced/contacted for this order, not
+        // just the one it ended up assigning -- the dispatcher needs the
+        // full candidate list to place a manual call to any of them.
+        technicians: techs
+          .filter((t) => t.order_id === o.id)
+          .map((t) => ({ id: t.id, name: t.name, company: t.company ?? null, phone: t.phone ?? null, status: t.status ?? null })),
       })),
       events: events.map((e) => ({
         id: e.id,

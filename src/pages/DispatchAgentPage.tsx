@@ -1,11 +1,16 @@
-import { AlertTriangle, Phone, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
+import { AlertTriangle, Phone, PhoneCall, Plus, RefreshCw } from 'lucide-react'
 import { useDispatchActivity } from '../hooks/useDispatchActivity'
+import { useRaleyActions } from '../hooks/useRaleyActions'
+import { RaleyOrderModal } from '../components/RaleyOrderModal'
+import type { NewDispatchOrder } from '../lib/types'
 
-// Read-only view onto Raley, the separate AI dispatch agent that sources and
-// negotiates with technicians by phone. Its data lives in its own Supabase
-// project with no shared schema or join key back to work_orders -- this page
-// is a status window into that system, not an integration with it. See the
-// README for why the two stay separate.
+// A status window into Raley, the separate AI dispatch agent that sources
+// and negotiates with technicians by phone -- plus two actions (new work
+// order, call technician now) that go through Raley's own API rather than
+// reimplementing it. See README for why the two systems' schemas stay
+// separate, and supabase/functions/raley-actions for how the write actions
+// actually reach Raley.
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null) return '—'
@@ -21,25 +26,64 @@ function formatWhen(iso: string): string {
 
 export function DispatchAgentPage() {
   const { data, loading, error, refetch } = useDispatchActivity()
+  const { createOrder, callTechnician, busy } = useRaleyActions()
+  const [showNewOrder, setShowNewOrder] = useState(false)
+  const [actionError, setActionError] = useState('')
+  const [callingId, setCallingId] = useState<string | null>(null)
+
+  const handleCreateOrder = async (payload: NewDispatchOrder) => {
+    await createOrder(payload)
+    await refetch()
+  }
+
+  const handleCall = async (orderTitle: string, orderId: string, techId: string, techName: string) => {
+    if (!confirm(`Place a real call to ${techName} about "${orderTitle}" right now? This dials their phone immediately.`)) return
+    setActionError('')
+    setCallingId(techId)
+    try {
+      await callTechnician(orderId, techId)
+      await refetch()
+    } catch (err) {
+      setActionError((err as Error).message)
+    } finally {
+      setCallingId(null)
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold text-gray-900">Dispatch Agent Activity</h2>
-          <p className="text-sm text-gray-400">Raley's recent technician sourcing calls — read-only, from a separate system.</p>
+          <p className="text-sm text-gray-400">Raley's technician sourcing — view activity, create orders, and place calls.</p>
         </div>
-        <button
-          onClick={() => refetch()}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50"
-        >
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowNewOrder(true)}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg px-3 py-2"
+          >
+            <Plus size={14} /> New Work Order
+          </button>
+          <button
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50"
+          >
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </div>
       </div>
+
+      {showNewOrder && <RaleyOrderModal onClose={() => setShowNewOrder(false)} onCreate={handleCreateOrder} />}
 
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
           Couldn't load dispatch agent activity: {error}
+        </p>
+      )}
+
+      {actionError && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+          {actionError}
         </p>
       )}
 
@@ -74,6 +118,7 @@ export function DispatchAgentPage() {
                   <th className="px-4 py-3 font-semibold">Urgency</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Assigned Technician</th>
+                  <th className="px-4 py-3 font-semibold">Technicians</th>
                   <th className="px-4 py-3 font-semibold">Updated</th>
                 </tr>
               </thead>
@@ -90,11 +135,31 @@ export function DispatchAgentPage() {
                         ? `${o.assigned_technician.name}${o.assigned_technician.company ? ` (${o.assigned_technician.company})` : ''}`
                         : '—'}
                     </td>
+                    <td className="px-4 py-2.5 text-gray-700">
+                      {o.technicians.length ? (
+                        <ul className="space-y-1">
+                          {o.technicians.map((t) => (
+                            <li key={t.id} className="flex items-center gap-1.5 whitespace-nowrap">
+                              <span>{t.name}{t.status ? <span className="text-gray-400"> · {t.status}</span> : null}</span>
+                              <button
+                                onClick={() => handleCall(o.title, o.id, t.id, t.name)}
+                                disabled={busy}
+                                title={`Call ${t.name} now`}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <PhoneCall size={12} />
+                                {callingId === t.id ? 'Calling…' : 'Call'}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : '—'}
+                    </td>
                     <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{formatWhen(o.updated_at)}</td>
                   </tr>
                 ))}
                 {!data.orders.length && (
-                  <tr><td colSpan={7} className="text-center text-gray-400 py-8">No orders in the dispatch agent yet.</td></tr>
+                  <tr><td colSpan={8} className="text-center text-gray-400 py-8">No orders in the dispatch agent yet.</td></tr>
                 )}
               </tbody>
             </table>
