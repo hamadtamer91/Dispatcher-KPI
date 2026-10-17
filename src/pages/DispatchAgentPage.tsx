@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { AlertTriangle, Phone, PhoneCall, Plus, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Phone, Plus, RefreshCw, Settings2 } from 'lucide-react'
 import { useDispatchActivity } from '../hooks/useDispatchActivity'
 import { useRaleyActions } from '../hooks/useRaleyActions'
 import { RaleyOrderModal } from '../components/RaleyOrderModal'
+import { RaleyManageOrderModal } from '../components/RaleyManageOrderModal'
 import type { NewDispatchOrder } from '../lib/types'
 
 // A status window into Raley, the separate AI dispatch agent that sources
@@ -26,10 +27,13 @@ function formatWhen(iso: string): string {
 
 export function DispatchAgentPage() {
   const { data, loading, error, refetch } = useDispatchActivity()
-  const { createOrder, callTechnician, busy } = useRaleyActions()
+  const { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, busy } = useRaleyActions()
   const [showNewOrder, setShowNewOrder] = useState(false)
+  const [manageOrderId, setManageOrderId] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
   const [callingId, setCallingId] = useState<string | null>(null)
+
+  const manageOrder = manageOrderId ? data?.orders.find((o) => o.id === manageOrderId) ?? null : null
 
   const handleCreateOrder = async (payload: NewDispatchOrder) => {
     await createOrder(payload)
@@ -48,6 +52,26 @@ export function DispatchAgentPage() {
     } finally {
       setCallingId(null)
     }
+  }
+
+  const handleSaveOrder: React.ComponentProps<typeof RaleyManageOrderModal>['onSave'] = async (orderId, patch) => {
+    await updateOrder(orderId, patch)
+    await refetch()
+  }
+
+  const handleReassign: React.ComponentProps<typeof RaleyManageOrderModal>['onReassign'] = async (orderId, technicianId) => {
+    await reassignTechnician(orderId, technicianId)
+    await refetch()
+  }
+
+  const handleToggleAutoDispatch: React.ComponentProps<typeof RaleyManageOrderModal>['onToggleAutoDispatch'] = async (orderId, autoDispatch) => {
+    await setAutoDispatch(orderId, autoDispatch)
+    await refetch()
+  }
+
+  const handleCancelOrder: React.ComponentProps<typeof RaleyManageOrderModal>['onCancelOrder'] = async (orderId) => {
+    await cancelOrder(orderId)
+    await refetch()
   }
 
   return (
@@ -74,6 +98,20 @@ export function DispatchAgentPage() {
       </div>
 
       {showNewOrder && <RaleyOrderModal onClose={() => setShowNewOrder(false)} onCreate={handleCreateOrder} />}
+
+      {manageOrder && (
+        <RaleyManageOrderModal
+          order={manageOrder}
+          onClose={() => setManageOrderId(null)}
+          onSave={handleSaveOrder}
+          onReassign={handleReassign}
+          onToggleAutoDispatch={handleToggleAutoDispatch}
+          onCancelOrder={handleCancelOrder}
+          onCall={handleCall}
+          busy={busy}
+          callingId={callingId}
+        />
+      )}
 
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
@@ -118,8 +156,9 @@ export function DispatchAgentPage() {
                   <th className="px-4 py-3 font-semibold">Urgency</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Assigned Technician</th>
-                  <th className="px-4 py-3 font-semibold">Technicians</th>
+                  <th className="px-4 py-3 font-semibold">Auto-Dispatch</th>
                   <th className="px-4 py-3 font-semibold">Updated</th>
+                  <th className="px-4 py-3 font-semibold"></th>
                 </tr>
               </thead>
               <tbody>
@@ -135,31 +174,20 @@ export function DispatchAgentPage() {
                         ? `${o.assigned_technician.name}${o.assigned_technician.company ? ` (${o.assigned_technician.company})` : ''}`
                         : '—'}
                     </td>
-                    <td className="px-4 py-2.5 text-gray-700">
-                      {o.technicians.length ? (
-                        <ul className="space-y-1">
-                          {o.technicians.map((t) => (
-                            <li key={t.id} className="flex items-center gap-1.5 whitespace-nowrap">
-                              <span>{t.name}{t.status ? <span className="text-gray-400"> · {t.status}</span> : null}</span>
-                              <button
-                                onClick={() => handleCall(o.title, o.id, t.id, t.name)}
-                                disabled={busy}
-                                title={`Call ${t.name} now`}
-                                className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                <PhoneCall size={12} />
-                                {callingId === t.id ? 'Calling…' : 'Call'}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : '—'}
-                    </td>
+                    <td className="px-4 py-2.5 text-gray-700">{o.auto_dispatch ? 'On' : 'Off'}</td>
                     <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{formatWhen(o.updated_at)}</td>
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => setManageOrderId(o.id)}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                      >
+                        <Settings2 size={12} /> Manage
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {!data.orders.length && (
-                  <tr><td colSpan={8} className="text-center text-gray-400 py-8">No orders in the dispatch agent yet.</td></tr>
+                  <tr><td colSpan={9} className="text-center text-gray-400 py-8">No orders in the dispatch agent yet.</td></tr>
                 )}
               </tbody>
             </table>

@@ -162,9 +162,15 @@ export interface DispatchOrderSummary {
   title: string
   trade: string | null
   location: string
+  description: string | null
   urgency: string | null
+  repair_ceiling: number | null
+  assessment_target: number | null
+  ground_rules: string | null
   status: string
+  auto_dispatch: boolean
   updated_at: string
+  assigned_technician_id: string | null
   assigned_technician: { name: string; company: string | null; phone: string | null } | null
   technicians: DispatchTechnicianSummary[]
 }
@@ -210,6 +216,19 @@ export interface NewDispatchOrder {
   assessment_target?: number | null
   ground_rules?: string
   auto_dispatch?: boolean
+}
+
+// Partial edit of an existing order -- same field shape as NewDispatchOrder
+// minus the required-on-create constraints, since any subset can be saved.
+export interface DispatchOrderPatch {
+  title?: string
+  location?: string
+  trade?: string | null
+  description?: string | null
+  urgency?: 'Routine' | 'Priority' | 'Emergency'
+  repair_ceiling?: number
+  assessment_target?: number | null
+  ground_rules?: string | null
 }
 
 export const STATUS_OPTIONS = [

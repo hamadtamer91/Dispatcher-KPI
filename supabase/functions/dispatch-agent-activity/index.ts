@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     const [ordersRes, techsRes, eventsRes, alertsRes] = await Promise.all([
       dispatch
         .from('ai_dispatch_orders')
-        .select('id, title, trade, location, urgency, status, updated_at, assigned_technician_id')
+        .select('id, title, trade, location, description, urgency, repair_ceiling, assessment_target, ground_rules, status, auto_dispatch, updated_at, assigned_technician_id')
         .order('updated_at', { ascending: false })
         .limit(ORDERS_LIMIT),
       dispatch
@@ -117,9 +117,15 @@ Deno.serve(async (req) => {
         title: o.title,
         trade: o.trade,
         location: o.location,
+        description: o.description,
         urgency: o.urgency,
+        repair_ceiling: o.repair_ceiling,
+        assessment_target: o.assessment_target,
+        ground_rules: o.ground_rules,
         status: o.status,
+        auto_dispatch: o.auto_dispatch,
         updated_at: o.updated_at,
+        assigned_technician_id: o.assigned_technician_id,
         assigned_technician: o.assigned_technician_id && techById.has(o.assigned_technician_id)
           ? (() => {
               const t = techById.get(o.assigned_technician_id)!

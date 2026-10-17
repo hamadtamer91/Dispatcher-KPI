@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import type { NewDispatchOrder } from '../lib/types'
+import type { DispatchOrderPatch, NewDispatchOrder } from '../lib/types'
 
 // Write actions against Raley, the separate AI dispatch agent, proxied
 // through the raley-actions edge function (which logs into Raley's own
@@ -53,5 +53,66 @@ export function useRaleyActions() {
     }
   }, [])
 
-  return { createOrder, callTechnician, busy }
+  // The four actions below write straight to Raley's ai_dispatch_orders row
+  // (see raley-actions' header comment for why that's safe) rather than
+  // going through Raley's own API, since Raley has no HTTP endpoint for
+  // editing an existing order.
+
+  const updateOrder = useCallback(async (orderId: string, patch: DispatchOrderPatch) => {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('raley-actions', {
+        body: { action: 'update_order', payload: { orderId, patch } },
+      })
+      if (error) throw new Error(await extractError(error))
+      if (data?.error) throw new Error(data.error)
+      return data
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  const reassignTechnician = useCallback(async (orderId: string, technicianId: string | null) => {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('raley-actions', {
+        body: { action: 'reassign_technician', payload: { orderId, technicianId } },
+      })
+      if (error) throw new Error(await extractError(error))
+      if (data?.error) throw new Error(data.error)
+      return data
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  const setAutoDispatch = useCallback(async (orderId: string, autoDispatch: boolean) => {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('raley-actions', {
+        body: { action: 'set_auto_dispatch', payload: { orderId, autoDispatch } },
+      })
+      if (error) throw new Error(await extractError(error))
+      if (data?.error) throw new Error(data.error)
+      return data
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  const cancelOrder = useCallback(async (orderId: string) => {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('raley-actions', {
+        body: { action: 'cancel_order', payload: { orderId } },
+      })
+      if (error) throw new Error(await extractError(error))
+      if (data?.error) throw new Error(data.error)
+      return data
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  return { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, busy }
 }

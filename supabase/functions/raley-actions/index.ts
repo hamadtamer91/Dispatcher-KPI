@@ -3,17 +3,39 @@
 // proposals tables (see README, and supabase/functions/dispatch-agent-activity
 // for the read-only counterpart to this function).
 //
-// Raley's own API (POST /api/orders, POST /api/calls-start) already does the
-// real work -- validation, auto-dispatch kickoff, and placing the actual
-// Vapi phone call. This function does not reimplement any of that; it only
-// logs in with Raley's own admin password (RALEY_ADMIN_PASSWORD, set as an
-// Edge Function secret here, never shipped to the browser) and forwards the
-// dashboard's request to Raley's real endpoint, so "New Work Order" and
-// "Call technician now" in this dashboard behave exactly as if they were
-// done from Raley's own app.
+// Two different write paths, depending on the action:
+//
+// 1. create_order / call_technician -- go through Raley's own API (POST
+//    /api/orders, POST /api/calls-start), which does real work beyond a
+//    plain row write (validation, auto-dispatch kickoff, and placing the
+//    actual Vapi phone call). We log in with Raley's own admin password
+//    (RALEY_ADMIN_PASSWORD, an Edge Function secret, never shipped to the
+//    browser) and forward the request to Raley's real endpoint, so these
+//    behave exactly as if done from Raley's own app.
+//
+// 2. update_order / reassign_technician / set_auto_dispatch / cancel_order --
+//    Raley has no HTTP endpoint for editing an existing order, so these
+//    write straight to the ai_dispatch_orders row using the SAME service
+//    role credentials dispatch-agent-activity already uses to read it
+//    (DISPATCH_AGENT_SUPABASE_URL / DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY,
+//    project-level secrets, no new setup needed). This is safe to do
+//    directly because Raley's own ongoing behavior is itself driven off this
+//    same table: a pg_cron job on that project polls it every 5 minutes
+//    (hitting Raley's /api/scheduler) and acts on whatever auto_dispatch /
+//    assigned_technician_id / status currently say -- so a plain column
+//    write here is picked up on Raley's own next pass exactly as if the
+//    change had been made in Raley's own UI. Reassigning a technician this
+//    way updates the record but does not itself notify that technician --
+//    use "Call technician" for that if a confirmation call is wanted.
 //
 //   POST { action: "create_order", payload: {...order fields} }
 //   POST { action: "call_technician", payload: { orderId, technicianId, purpose? } }
+//   POST { action: "update_order", payload: { orderId, patch: {...order fields} } }
+//   POST { action: "reassign_technician", payload: { orderId, technicianId } }  // technicianId: null clears it
+//   POST { action: "set_auto_dispatch", payload: { orderId, autoDispatch } }
+//   POST { action: "cancel_order", payload: { orderId } }
+
+import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const RALEY_BASE_URL = 'https://nexafix-voice-agent-ngvs.vercel.app'
 
@@ -35,7 +57,34 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-type Action = 'create_order' | 'call_technician'
+type ApiAction = 'create_order' | 'call_technician'
+type DbAction = 'update_order' | 'reassign_technician' | 'set_auto_dispatch' | 'cancel_order'
+type Action = ApiAction | DbAction
+
+const API_ACTIONS = new Set<Action>(['create_order', 'call_technician'])
+const DB_ACTIONS = new Set<Action>(['update_order', 'reassign_technician', 'set_auto_dispatch', 'cancel_order'])
+
+// Whitelisted editable columns -- never spread an arbitrary patch object
+// straight into a Postgres update.
+const EDITABLE_ORDER_FIELDS = [
+  'title', 'trade', 'location', 'description', 'urgency',
+  'repair_ceiling', 'assessment_target', 'ground_rules',
+] as const
+
+function pickEditableFields(patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of EDITABLE_ORDER_FIELDS) {
+    if (key in patch) out[key] = patch[key]
+  }
+  return out
+}
+
+function dispatchDb() {
+  const url = Deno.env.get('DISPATCH_AGENT_SUPABASE_URL')
+  const key = Deno.env.get('DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY')
+  if (!url || !key) return null
+  return createClient(url, key)
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -46,6 +95,69 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const body = await req.json().catch(() => null)
+    const action = body?.action as Action | undefined
+    const payload = body?.payload ?? {}
+
+    if (!action || (!API_ACTIONS.has(action) && !DB_ACTIONS.has(action))) {
+      return jsonResponse(
+        { error: 'action must be one of "create_order", "call_technician", "update_order", "reassign_technician", "set_auto_dispatch", "cancel_order"' },
+        400,
+      )
+    }
+
+    // ---- Direct-DB actions: write straight to ai_dispatch_orders. ----
+    if (DB_ACTIONS.has(action)) {
+      if (!payload.orderId) {
+        return jsonResponse({ error: 'payload.orderId is required' }, 400)
+      }
+      const db = dispatchDb()
+      if (!db) {
+        console.error('env_check failed', { has_url: false, has_key: false })
+        return jsonResponse(
+          { step: 'env_check', error: 'Missing DISPATCH_AGENT_SUPABASE_URL / DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY' },
+          500,
+        )
+      }
+
+      let patch: Record<string, unknown>
+      if (action === 'update_order') {
+        patch = pickEditableFields(payload.patch ?? {})
+        if (Object.keys(patch).length === 0) {
+          return jsonResponse({ error: 'payload.patch has no editable fields' }, 400)
+        }
+      } else if (action === 'reassign_technician') {
+        // technicianId may be null, to clear the assignment.
+        patch = { assigned_technician_id: payload.technicianId ?? null }
+      } else if (action === 'set_auto_dispatch') {
+        if (typeof payload.autoDispatch !== 'boolean') {
+          return jsonResponse({ error: 'payload.autoDispatch must be a boolean' }, 400)
+        }
+        patch = { auto_dispatch: payload.autoDispatch }
+      } else {
+        // cancel_order -- stop the scheduler from acting on it, and make
+        // the terminal state visible in status too.
+        patch = { auto_dispatch: false, status: 'Cancelled' }
+      }
+
+      const { data, error } = await db
+        .from('ai_dispatch_orders')
+        .update(patch)
+        .eq('id', payload.orderId)
+        .select('id, title, status, auto_dispatch, assigned_technician_id')
+        .maybeSingle()
+
+      if (error) {
+        console.error(`${action} db update failed`, error)
+        return jsonResponse({ step: action, error: error.message }, 500)
+      }
+      if (!data) {
+        return jsonResponse({ step: action, error: 'No order found with that id' }, 404)
+      }
+      return jsonResponse({ ok: true, result: data })
+    }
+
+    // ---- API actions: log into Raley and forward to its real endpoint. ----
     const RALEY_ADMIN_PASSWORD = Deno.env.get('RALEY_ADMIN_PASSWORD')
     if (!RALEY_ADMIN_PASSWORD) {
       // Never logs the password itself, only whether it's set.
@@ -53,13 +165,6 @@ Deno.serve(async (req) => {
       return jsonResponse({ step: 'env_check', error: 'Missing RALEY_ADMIN_PASSWORD' }, 500)
     }
 
-    const body = await req.json().catch(() => null)
-    const action = body?.action as Action | undefined
-    const payload = body?.payload ?? {}
-
-    if (action !== 'create_order' && action !== 'call_technician') {
-      return jsonResponse({ error: 'action must be "create_order" or "call_technician"' }, 400)
-    }
     if (action === 'call_technician' && (!payload.orderId || !payload.technicianId)) {
       return jsonResponse({ error: 'payload.orderId and payload.technicianId are required' }, 400)
     }
