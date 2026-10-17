@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import type { DispatchOrderPatch, NewDispatchOrder } from '../lib/types'
+import type { DispatchOrderPatch, NewDispatchOrder, NewDispatchTechnician } from '../lib/types'
 
 // Write actions against Raley, the separate AI dispatch agent, proxied
 // through the raley-actions edge function (which logs into Raley's own
@@ -114,5 +114,22 @@ export function useRaleyActions() {
     }
   }, [])
 
-  return { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, busy }
+  // Add a brand-new technician as a candidate on an existing order -- for
+  // when the dispatcher wants to bring in someone Raley hasn't already
+  // sourced, rather than reassigning among the ones it has.
+  const addTechnician = useCallback(async (orderId: string, technician: NewDispatchTechnician) => {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('raley-actions', {
+        body: { action: 'add_technician', payload: { orderId, ...technician } },
+      })
+      if (error) throw new Error(await extractError(error))
+      if (data?.error) throw new Error(data.error)
+      return data
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  return { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, addTechnician, busy }
 }

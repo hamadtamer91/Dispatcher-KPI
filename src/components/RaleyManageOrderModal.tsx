@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { PhoneCall } from 'lucide-react'
-import type { DispatchOrderPatch, DispatchOrderSummary } from '../lib/types'
+import { PhoneCall, UserPlus } from 'lucide-react'
+import type { DispatchOrderPatch, DispatchOrderSummary, NewDispatchTechnician } from '../lib/types'
 
 interface Props {
   order: DispatchOrderSummary
@@ -9,13 +9,16 @@ interface Props {
   onReassign: (orderId: string, technicianId: string | null) => Promise<void>
   onToggleAutoDispatch: (orderId: string, autoDispatch: boolean) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
+  onAddTechnician: (orderId: string, technician: NewDispatchTechnician) => Promise<void>
   onCall: (orderTitle: string, orderId: string, techId: string, techName: string) => Promise<void>
   busy: boolean
   callingId: string | null
 }
 
+const EMPTY_TECH: NewDispatchTechnician = { name: '', company: '', phone: '', email: '' }
+
 export function RaleyManageOrderModal({
-  order, onClose, onSave, onReassign, onToggleAutoDispatch, onCancelOrder, onCall, busy, callingId,
+  order, onClose, onSave, onReassign, onToggleAutoDispatch, onCancelOrder, onAddTechnician, onCall, busy, callingId,
 }: Props) {
   const [form, setForm] = useState<DispatchOrderPatch>({
     title: order.title,
@@ -30,6 +33,9 @@ export function RaleyManageOrderModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [showAddTech, setShowAddTech] = useState(false)
+  const [newTech, setNewTech] = useState<NewDispatchTechnician>(EMPTY_TECH)
+  const [addingTech, setAddingTech] = useState(false)
   const isCancelled = order.status === 'Cancelled'
 
   const update = <K extends keyof DispatchOrderPatch>(key: K, value: DispatchOrderPatch[K]) =>
@@ -78,6 +84,19 @@ export function RaleyManageOrderModal({
   const handleCancelOrder = async () => {
     if (!confirm(`Cancel "${order.title}"? Raley will stop working this order -- it won't call any more technicians about it.`)) return
     await runAction(() => onCancelOrder(order.id), 'Order cancelled.')
+  }
+
+  const handleAddTechnician = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newTech.name.trim()) {
+      setError('Technician name is required.')
+      return
+    }
+    setAddingTech(true)
+    await runAction(() => onAddTechnician(order.id, newTech), `${newTech.name} added as a candidate.`)
+    setAddingTech(false)
+    setNewTech(EMPTY_TECH)
+    setShowAddTech(false)
   }
 
   return (
@@ -163,6 +182,66 @@ export function RaleyManageOrderModal({
                   </li>
                 ))}
               </ul>
+            )}
+
+            {!isCancelled && (
+              <>
+                {!showAddTech ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddTech(true)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 pt-1"
+                  >
+                    <UserPlus size={12} /> Add a technician
+                  </button>
+                ) : (
+                  <form onSubmit={handleAddTechnician} className="pt-2 space-y-2 border-t border-gray-200">
+                    <p className="text-xs font-semibold text-gray-600 pt-1">New technician</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        placeholder="Name *"
+                        value={newTech.name}
+                        onChange={(e) => setNewTech((t) => ({ ...t, name: e.target.value }))}
+                        className={inputCls}
+                      />
+                      <input
+                        placeholder="Company"
+                        value={newTech.company}
+                        onChange={(e) => setNewTech((t) => ({ ...t, company: e.target.value }))}
+                        className={inputCls}
+                      />
+                      <input
+                        placeholder="Phone"
+                        value={newTech.phone}
+                        onChange={(e) => setNewTech((t) => ({ ...t, phone: e.target.value }))}
+                        className={inputCls}
+                      />
+                      <input
+                        placeholder="Email"
+                        value={newTech.email}
+                        onChange={(e) => setNewTech((t) => ({ ...t, email: e.target.value }))}
+                        className={inputCls}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setShowAddTech(false); setNewTech(EMPTY_TECH) }}
+                        className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={addingTech || busy}
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-60"
+                      >
+                        {addingTech ? 'Adding...' : 'Add technician'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </>
             )}
           </div>
 

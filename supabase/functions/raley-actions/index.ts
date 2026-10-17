@@ -34,6 +34,17 @@
 //   POST { action: "reassign_technician", payload: { orderId, technicianId } }  // technicianId: null clears it
 //   POST { action: "set_auto_dispatch", payload: { orderId, autoDispatch } }
 //   POST { action: "cancel_order", payload: { orderId } }
+//   POST { action: "add_technician", payload: { orderId, name, company?, phone?, email?, notes? } }
+//
+// add_technician is a direct-DB insert, same as the other DB actions above --
+// it's exactly what Raley's own "Manually added" technician path already
+// does (every existing row in ai_dispatch_technicians has source =
+// 'Manually added'; there's no separate AI-sourcing insert path to match),
+// so a new row here is indistinguishable from one added in Raley's own UI.
+// New rows start as status "Sourced" (Raley's own observed convention for a
+// technician that's been added but not yet contacted) with attempts: 0, so
+// the scheduler and "Call" button both treat it exactly like any other
+// candidate for the order.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
@@ -58,11 +69,11 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 type ApiAction = 'create_order' | 'call_technician'
-type DbAction = 'update_order' | 'reassign_technician' | 'set_auto_dispatch' | 'cancel_order'
+type DbAction = 'update_order' | 'reassign_technician' | 'set_auto_dispatch' | 'cancel_order' | 'add_technician'
 type Action = ApiAction | DbAction
 
 const API_ACTIONS = new Set<Action>(['create_order', 'call_technician'])
-const DB_ACTIONS = new Set<Action>(['update_order', 'reassign_technician', 'set_auto_dispatch', 'cancel_order'])
+const DB_ACTIONS = new Set<Action>(['update_order', 'reassign_technician', 'set_auto_dispatch', 'cancel_order', 'add_technician'])
 
 // Whitelisted editable columns -- never spread an arbitrary patch object
 // straight into a Postgres update.
@@ -101,7 +112,7 @@ Deno.serve(async (req) => {
 
     if (!action || (!API_ACTIONS.has(action) && !DB_ACTIONS.has(action))) {
       return jsonResponse(
-        { error: 'action must be one of "create_order", "call_technician", "update_order", "reassign_technician", "set_auto_dispatch", "cancel_order"' },
+        { error: 'action must be one of "create_order", "call_technician", "update_order", "reassign_technician", "set_auto_dispatch", "cancel_order", "add_technician"' },
         400,
       )
     }
@@ -118,6 +129,32 @@ Deno.serve(async (req) => {
           { step: 'env_check', error: 'Missing DISPATCH_AGENT_SUPABASE_URL / DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY' },
           500,
         )
+      }
+
+      if (action === 'add_technician') {
+        if (!payload.name) {
+          return jsonResponse({ error: 'payload.name is required' }, 400)
+        }
+        const { data, error } = await db
+          .from('ai_dispatch_technicians')
+          .insert({
+            order_id: payload.orderId,
+            name: payload.name,
+            company: payload.company ?? '',
+            phone: payload.phone ?? null,
+            email: payload.email ?? '',
+            notes: payload.notes ?? '',
+            source: 'Manually added',
+            status: 'Sourced',
+          })
+          .select('id, name, company, phone, status')
+          .single()
+
+        if (error) {
+          console.error('add_technician db insert failed', error)
+          return jsonResponse({ step: action, error: error.message }, 500)
+        }
+        return jsonResponse({ ok: true, result: data })
       }
 
       let patch: Record<string, unknown>

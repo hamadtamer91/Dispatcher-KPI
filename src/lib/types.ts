@@ -231,6 +231,17 @@ export interface DispatchOrderPatch {
   ground_rules?: string | null
 }
 
+// Manually add a technician as a candidate on an existing order -- the same
+// "Manually added" path Raley's own data already shows for every technician
+// on file (see raley-actions' add_technician action).
+export interface NewDispatchTechnician {
+  name: string
+  company?: string
+  phone?: string
+  email?: string
+  notes?: string
+}
+
 export const STATUS_OPTIONS = [
   'Assigned',
   'OnSite',

@@ -27,7 +27,7 @@ function formatWhen(iso: string): string {
 
 export function DispatchAgentPage() {
   const { data, loading, error, refetch } = useDispatchActivity()
-  const { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, busy } = useRaleyActions()
+  const { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, addTechnician, busy } = useRaleyActions()
   const [showNewOrder, setShowNewOrder] = useState(false)
   const [manageOrderId, setManageOrderId] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
@@ -74,6 +74,11 @@ export function DispatchAgentPage() {
     await refetch()
   }
 
+  const handleAddTechnician: React.ComponentProps<typeof RaleyManageOrderModal>['onAddTechnician'] = async (orderId, technician) => {
+    await addTechnician(orderId, technician)
+    await refetch()
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -107,6 +112,7 @@ export function DispatchAgentPage() {
           onReassign={handleReassign}
           onToggleAutoDispatch={handleToggleAutoDispatch}
           onCancelOrder={handleCancelOrder}
+          onAddTechnician={handleAddTechnician}
           onCall={handleCall}
           busy={busy}
           callingId={callingId}
