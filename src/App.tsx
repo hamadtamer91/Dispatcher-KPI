@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
-import { LayoutGrid, ClipboardList, Users, Building2, LogOut, BarChart3, Map as MapIcon, FileText, Tags } from 'lucide-react'
+import { LayoutGrid, ClipboardList, Users, Building2, LogOut, BarChart3, Map as MapIcon, FileText, Tags, Phone } from 'lucide-react'
 import { useAuth } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
 import { WorkOrdersPage } from './pages/WorkOrdersPage'
@@ -14,8 +14,9 @@ import { MapPage } from './pages/MapPage'
 import { ProposalsPage } from './pages/ProposalsPage'
 import { ProposalDetailPage } from './pages/ProposalDetailPage'
 import { PriceListsPage } from './pages/PriceListsPage'
+import { DispatchAgentPage } from './pages/DispatchAgentPage'
 
-type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'proposals' | 'price_lists'
+type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'proposals' | 'price_lists' | 'dispatch_agent'
 type DispatcherTab = 'jobs' | 'proposals' | 'price_lists'
 
 export default function App() {
@@ -81,6 +82,7 @@ export default function App() {
             <NavTab active={tab === 'map'} onClick={() => goTab('map')} icon={<MapIcon size={15} />} label="Map" />
             <NavTab active={tab === 'proposals'} onClick={() => goTab('proposals')} icon={<FileText size={15} />} label="Proposals" />
             <NavTab active={tab === 'price_lists'} onClick={() => goTab('price_lists')} icon={<Tags size={15} />} label="Price Lists" />
+            <NavTab active={tab === 'dispatch_agent'} onClick={() => goTab('dispatch_agent')} icon={<Phone size={15} />} label="Dispatch Agent" />
             {profile.role === 'super_admin' && (
               <NavTab active={tab === 'users'} onClick={() => goTab('users')} icon={<Users size={15} />} label="Manage Users" />
             )}
@@ -131,6 +133,7 @@ export default function App() {
                     <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
                   )}
                   {tab === 'price_lists' && <PriceListsPage />}
+                  {tab === 'dispatch_agent' && <DispatchAgentPage />}
                   {tab === 'users' && profile.role === 'super_admin' && <ManageUsersPage />}
                   {tab === 'clients' && profile.role === 'super_admin' && <ClientReportsPage />}
                 </>

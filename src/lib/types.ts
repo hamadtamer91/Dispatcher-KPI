@@ -145,6 +145,48 @@ export interface Proposal {
   updated_at: string
 }
 
+// ---- Dispatch Agent ("Raley") activity -- read-only view onto the separate
+// nexafix-dispatch Supabase project, surfaced here via the
+// dispatch-agent-activity edge function. See README for the two-system split. ----
+
+export interface DispatchOrderSummary {
+  id: string
+  title: string
+  trade: string | null
+  location: string
+  urgency: string | null
+  status: string
+  updated_at: string
+  assigned_technician: { name: string; company: string | null; phone: string | null } | null
+}
+
+export interface DispatchCallEventSummary {
+  id: string
+  order_title: string | null
+  technician_name: string | null
+  provider: string | null
+  event_type: string | null
+  ended_reason: string | null
+  duration_seconds: number | null
+  summary: string | null
+  created_at: string
+}
+
+export interface DispatchAlertSummary {
+  id: string
+  level: string
+  message: string
+  order_title: string | null
+  created_at: string
+}
+
+export interface DispatchActivity {
+  orders: DispatchOrderSummary[]
+  events: DispatchCallEventSummary[]
+  alerts: DispatchAlertSummary[]
+  fetched_at: string
+}
+
 export const STATUS_OPTIONS = [
   'Assigned',
   'OnSite',
