@@ -21,15 +21,32 @@ const ORDERS_LIMIT = 25
 const EVENTS_LIMIT = 30
 const ALERTS_LIMIT = 20
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  })
+}
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: CORS_HEADERS })
+  }
+
   try {
     const DISPATCH_URL = Deno.env.get('DISPATCH_AGENT_SUPABASE_URL')
     const DISPATCH_SERVICE_ROLE_KEY = Deno.env.get('DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY')
 
     if (!DISPATCH_URL || !DISPATCH_SERVICE_ROLE_KEY) {
-      return new Response(
-        JSON.stringify({ step: 'env_check', error: 'Missing DISPATCH_AGENT_SUPABASE_URL / DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      return jsonResponse(
+        { step: 'env_check', error: 'Missing DISPATCH_AGENT_SUPABASE_URL / DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY' },
+        500,
       )
     }
 
@@ -59,7 +76,7 @@ Deno.serve(async (req) => {
 
     for (const [step, res] of [['orders', ordersRes], ['technicians', techsRes], ['events', eventsRes], ['alerts', alertsRes]] as const) {
       if (res.error) {
-        return new Response(JSON.stringify({ step, error: res.error }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+        return jsonResponse({ step, error: res.error }, 500)
       }
     }
 
@@ -122,8 +139,8 @@ Deno.serve(async (req) => {
       fetched_at: new Date().toISOString(),
     }
 
-    return new Response(JSON.stringify(responseBody), { headers: { 'Content-Type': 'application/json' } })
+    return jsonResponse(responseBody)
   } catch (err) {
-    return new Response(JSON.stringify({ step: 'unhandled', error: errMsg(err) }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return jsonResponse({ step: 'unhandled', error: errMsg(err) }, 500)
   }
 })
