@@ -44,6 +44,14 @@ Deno.serve(async (req) => {
     const DISPATCH_SERVICE_ROLE_KEY = Deno.env.get('DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY')
 
     if (!DISPATCH_URL || !DISPATCH_SERVICE_ROLE_KEY) {
+      // Temporary diagnostic: never logs the secret values themselves, only
+      // whether each one is present, so we can tell from the function logs
+      // which (if either) is missing without the frontend seeing anything
+      // sensitive.
+      console.error('env_check failed', {
+        has_url: !!DISPATCH_URL,
+        has_key: !!DISPATCH_SERVICE_ROLE_KEY,
+      })
       return jsonResponse(
         { step: 'env_check', error: 'Missing DISPATCH_AGENT_SUPABASE_URL / DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY' },
         500,
@@ -76,6 +84,7 @@ Deno.serve(async (req) => {
 
     for (const [step, res] of [['orders', ordersRes], ['technicians', techsRes], ['events', eventsRes], ['alerts', alertsRes]] as const) {
       if (res.error) {
+        console.error(`${step} query failed`, res.error)
         return jsonResponse({ step, error: res.error }, 500)
       }
     }
@@ -141,6 +150,7 @@ Deno.serve(async (req) => {
 
     return jsonResponse(responseBody)
   } catch (err) {
+    console.error('unhandled error', errMsg(err))
     return jsonResponse({ step: 'unhandled', error: errMsg(err) }, 500)
   }
 })
