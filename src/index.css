@@ -1,1 +1,256 @@
 @import "tailwindcss";
+
+/* ---- Design tokens -------------------------------------------------------
+   A grounded teal replaces the default indigo SaaS accent -- it reads closer
+   to infrastructure/utility work than a generic purple-blue. Named scale so
+   Tailwind v4 generates bg-brand-600, text-brand-700, border-brand-200, etc.
+   Semantic colors (good/warn/danger/neutral) are separate from brand so a
+   status pill never gets confused with an interactive accent. */
+@theme {
+  --font-sans: "Manrope", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --color-brand-50: #eef7f5;
+  --color-brand-100: #d9eeea;
+  --color-brand-200: #b3ddd5;
+  --color-brand-300: #86c7bc;
+  --color-brand-400: #52ac9e;
+  --color-brand-500: #228f80;
+  --color-brand-600: #0f6e66;
+  --color-brand-700: #0b5650;
+  --color-brand-800: #0a4440;
+  --color-brand-900: #083531;
+
+  --color-ink: #14181c;
+  --color-ink-soft: #5b6472;
+  --color-ink-faint: #93999f;
+
+  --color-canvas: #f3f5f6;
+  --color-line: #e3e7ea;
+  --color-line-soft: #edf0f2;
+
+  --color-good: #157f4b;
+  --color-good-tint: #e7f6ed;
+  --color-warn: #b4650a;
+  --color-warn-tint: #fdf1e1;
+  --color-danger: #c0362c;
+  --color-danger-tint: #fbeae8;
+  --color-neutral: #51596a;
+  --color-neutral-tint: #eef1f2;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-feature-settings: "tnum" 1;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Buttons -- one shared recipe, variants layer on top of it. Rounded-lg
+     (not full-pill) so a row of buttons reads as controls, not chips. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+    border-radius: 0.625rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    padding: 0.5rem 0.875rem;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 80ms ease;
+  }
+  .btn:active {
+    transform: scale(0.98);
+  }
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+  }
+  .btn-primary {
+    background-color: var(--color-brand-600);
+    color: white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-brand-700);
+  }
+  .btn-secondary {
+    background-color: white;
+    color: var(--color-ink);
+    border: 1px solid var(--color-line);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background-color: var(--color-canvas);
+    border-color: color-mix(in srgb, var(--color-line) 60%, var(--color-ink-faint));
+  }
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--color-ink-soft);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--color-line-soft);
+    color: var(--color-ink);
+  }
+  .btn-danger {
+    background-color: var(--color-danger);
+    color: white;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--color-danger) 85%, black);
+  }
+  .btn-danger-ghost {
+    background-color: transparent;
+    color: var(--color-danger);
+  }
+  .btn-danger-ghost:hover:not(:disabled) {
+    background-color: var(--color-danger-tint);
+  }
+  .btn-sm {
+    font-size: 0.75rem;
+    padding: 0.375rem 0.625rem;
+    border-radius: 0.5rem;
+  }
+  .btn-icon {
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    color: var(--color-ink-faint);
+  }
+  .btn-icon:hover:not(:disabled) {
+    background-color: var(--color-line-soft);
+    color: var(--color-ink);
+  }
+
+  /* Inputs -- shared recipe for text/number/date/select/textarea. */
+  .field {
+    width: 100%;
+    border-radius: 0.625rem;
+    border: 1px solid var(--color-line);
+    background-color: white;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .field::placeholder {
+    color: var(--color-ink-faint);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--color-brand-400);
+    box-shadow: 0 0 0 3px var(--color-brand-100);
+  }
+  .field:disabled {
+    background-color: var(--color-canvas);
+    color: var(--color-ink-faint);
+  }
+  .field-label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--color-ink-soft);
+    margin-bottom: 0.25rem;
+  }
+
+  /* Flat inline input used inside dense editable table cells -- borderless
+     until hovered/focused, so a table of mostly-static data doesn't look
+     like a wall of form fields. */
+  .field-inline {
+    border-radius: 0.375rem;
+    border: 1px solid transparent;
+    padding: 0.25rem 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink);
+    background: transparent;
+    transition: border-color 120ms ease, background-color 120ms ease;
+  }
+  .field-inline:hover {
+    border-color: var(--color-line);
+  }
+  .field-inline:focus {
+    outline: none;
+    border-color: var(--color-brand-400);
+    background-color: white;
+  }
+  .field-inline:disabled {
+    background-color: transparent;
+    color: var(--color-ink-faint);
+  }
+
+  /* Containers. .panel is a flat, bordered content block -- used for tables
+     and dense lists so not everything on the page gets a card shadow. */
+  .panel {
+    background-color: white;
+    border: 1px solid var(--color-line);
+    border-radius: 0.875rem;
+  }
+  /* .tile is the elevated variant, reserved for things meant to draw a
+     click (KPI tiles that open a detail page, etc). */
+  .tile {
+    background-color: white;
+    border: 1px solid var(--color-line);
+    border-radius: 0.875rem;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+  .tile-interactive {
+    cursor: pointer;
+  }
+  .tile-interactive:hover {
+    border-color: var(--color-brand-200);
+    box-shadow: 0 4px 16px -4px rgba(15, 110, 102, 0.16);
+  }
+
+  .table-head-row {
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--color-ink-faint);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .table-row {
+    border-bottom: 1px solid var(--color-line-soft);
+    transition: background-color 100ms ease;
+  }
+  .table-row:hover {
+    background-color: var(--color-canvas);
+  }
+
+  /* Status/urgency pills. One shape, variant decides color. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .badge-dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .badge-brand { background-color: var(--color-brand-50); color: var(--color-brand-700); }
+  .badge-good { background-color: var(--color-good-tint); color: var(--color-good); }
+  .badge-warn { background-color: var(--color-warn-tint); color: var(--color-warn); }
+  .badge-danger { background-color: var(--color-danger-tint); color: var(--color-danger); }
+  .badge-neutral { background-color: var(--color-neutral-tint); color: var(--color-neutral); }
+}

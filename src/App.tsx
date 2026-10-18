@@ -1,6 +1,10 @@
 import { useState } from 'react'
-import { Routes, Route, useNavigate } from 'react-router-dom'
-import { LayoutGrid, ClipboardList, Users, Building2, LogOut, BarChart3, Map as MapIcon, FileText, Tags, Phone } from 'lucide-react'
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+  LayoutGrid, ClipboardList, Users, Building2, LogOut, BarChart3,
+  Map as MapIcon, FileText, Tags, Phone, Menu, X,
+} from 'lucide-react'
 import { useAuth } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
 import { WorkOrdersPage } from './pages/WorkOrdersPage'
@@ -19,24 +23,38 @@ import { DispatchAgentPage } from './pages/DispatchAgentPage'
 type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'proposals' | 'price_lists' | 'dispatch_agent'
 type DispatcherTab = 'jobs' | 'proposals' | 'price_lists'
 
+interface NavEntry<T extends string> {
+  key: T
+  label: string
+  icon: React.ReactNode
+}
+interface NavGroup<T extends string> {
+  label: string
+  items: NavEntry<T>[]
+}
+
 export default function App() {
   const { session, profile, loading, error, signIn, signOut } = useAuth()
   const [tab, setTab] = useState<Tab>('work_orders')
   const [dispatcherTab, setDispatcherTab] = useState<DispatcherTab>('jobs')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
 
   const goTab = (t: Tab) => {
     setTab(t)
     navigate('/')
+    setMobileNavOpen(false)
   }
 
   const goDispatcherTab = (t: DispatcherTab) => {
     setDispatcherTab(t)
     navigate('/')
+    setMobileNavOpen(false)
   }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center text-sm text-gray-400">Loading...</div>
+    return <div className="min-h-screen flex items-center justify-center text-sm text-ink-faint bg-canvas">Loading...</div>
   }
 
   if (!session) {
@@ -45,10 +63,10 @@ export default function App() {
 
   if (!profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div className="min-h-screen flex items-center justify-center bg-canvas px-4">
         <div className="max-w-sm text-center space-y-4">
-          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-4">{error || 'No profile found for this account.'}</p>
-          <button onClick={signOut} className="text-sm font-medium text-gray-500 hover:text-gray-700">Sign out</button>
+          <p className="text-sm text-warn bg-warn-tint border border-warn/20 rounded-xl p-4">{error || 'No profile found for this account.'}</p>
+          <button onClick={signOut} className="text-sm font-medium text-ink-soft hover:text-ink">Sign out</button>
         </div>
       </div>
     )
@@ -56,105 +74,237 @@ export default function App() {
 
   const isDispatcherOnly = profile.role === 'dispatcher'
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold tracking-widest text-gray-400 uppercase">New Global Vista Solutions</p>
-            <h1 className="text-lg font-bold text-gray-900">Dispatcher KPI Platform</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-sm font-medium text-gray-900">{profile.display_name}</p>
-              <p className="text-xs text-gray-400 capitalize">{profile.role.replace('_', ' ')}</p>
-            </div>
-            <button onClick={signOut} className="text-gray-400 hover:text-red-600" title="Sign out">
-              <LogOut size={18} />
-            </button>
-          </div>
-        </div>
-        {!isDispatcherOnly && (
-          <nav className="max-w-6xl mx-auto px-6 flex gap-1 -mb-px">
-            <NavTab active={tab === 'work_orders'} onClick={() => goTab('work_orders')} icon={<ClipboardList size={15} />} label="Work Orders" />
-            <NavTab active={tab === 'kpi'} onClick={() => goTab('kpi')} icon={<LayoutGrid size={15} />} label="KPI Overview" />
-            <NavTab active={tab === 'analytics'} onClick={() => goTab('analytics')} icon={<BarChart3 size={15} />} label="Analytics" />
-            <NavTab active={tab === 'map'} onClick={() => goTab('map')} icon={<MapIcon size={15} />} label="Map" />
-            <NavTab active={tab === 'proposals'} onClick={() => goTab('proposals')} icon={<FileText size={15} />} label="Proposals" />
-            <NavTab active={tab === 'price_lists'} onClick={() => goTab('price_lists')} icon={<Tags size={15} />} label="Price Lists" />
-            <NavTab active={tab === 'dispatch_agent'} onClick={() => goTab('dispatch_agent')} icon={<Phone size={15} />} label="Dispatch Agent" />
-            {profile.role === 'super_admin' && (
-              <NavTab active={tab === 'users'} onClick={() => goTab('users')} icon={<Users size={15} />} label="Manage Users" />
-            )}
-            {profile.role === 'super_admin' && (
-              <NavTab active={tab === 'clients'} onClick={() => goTab('clients')} icon={<Building2 size={15} />} label="Store Reports" />
-            )}
-          </nav>
-        )}
-        {isDispatcherOnly && (
-          <nav className="max-w-6xl mx-auto px-6 flex gap-1 -mb-px">
-            <NavTab active={dispatcherTab === 'jobs'} onClick={() => goDispatcherTab('jobs')} icon={<ClipboardList size={15} />} label="My Jobs" />
-            <NavTab active={dispatcherTab === 'proposals'} onClick={() => goDispatcherTab('proposals')} icon={<FileText size={15} />} label="Proposals" />
-            <NavTab active={dispatcherTab === 'price_lists'} onClick={() => goDispatcherTab('price_lists')} icon={<Tags size={15} />} label="Price Lists" />
-          </nav>
-        )}
-      </header>
+  const adminGroups: NavGroup<Tab>[] = [
+    {
+      label: 'Workspace',
+      items: [
+        { key: 'work_orders', label: 'Work Orders', icon: <ClipboardList size={17} /> },
+        { key: 'kpi', label: 'KPI Overview', icon: <LayoutGrid size={17} /> },
+        { key: 'analytics', label: 'Analytics', icon: <BarChart3 size={17} /> },
+        { key: 'map', label: 'Map', icon: <MapIcon size={17} /> },
+      ],
+    },
+    {
+      label: 'Sales',
+      items: [
+        { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
+        { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
+      ],
+    },
+    {
+      label: 'Automation',
+      items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} /> }],
+    },
+    ...(profile.role === 'super_admin'
+      ? [{
+          label: 'Admin',
+          items: [
+            { key: 'users' as Tab, label: 'Manage Users', icon: <Users size={17} /> },
+            { key: 'clients' as Tab, label: 'Store Reports', icon: <Building2 size={17} /> },
+          ],
+        }]
+      : []),
+  ]
 
-      <main className="max-w-6xl mx-auto px-6 py-6">
-        {isDispatcherOnly ? (
-          <Routes>
-            <Route path="/proposals/:id" element={<ProposalDetailPage />} />
-            <Route
-              path="*"
-              element={
-                <>
-                  {dispatcherTab === 'jobs' && <DispatcherView dispatcherName={profile.dispatcher_name} />}
-                  {dispatcherTab === 'proposals' && (
-                    <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
-                  )}
-                  {dispatcherTab === 'price_lists' && <PriceListsPage />}
-                </>
-              }
+  const dispatcherGroups: NavGroup<DispatcherTab>[] = [
+    {
+      label: 'Workspace',
+      items: [
+        { key: 'jobs', label: 'My Jobs', icon: <ClipboardList size={17} /> },
+        { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
+        { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
+      ],
+    },
+  ]
+
+  const sidebarBody = isDispatcherOnly ? (
+    <SidebarNav groups={dispatcherGroups} active={dispatcherTab} onSelect={goDispatcherTab} />
+  ) : (
+    <SidebarNav groups={adminGroups} active={tab} onSelect={goTab} />
+  )
+
+  const motionKey = location.pathname === '/'
+    ? (isDispatcherOnly ? `d-${dispatcherTab}` : `t-${tab}`)
+    : location.pathname
+
+  const pageContent = isDispatcherOnly ? (
+    <Routes location={location}>
+      <Route path="/proposals/:id" element={<ProposalDetailPage />} />
+      <Route
+        path="*"
+        element={
+          <>
+            {dispatcherTab === 'jobs' && <DispatcherView dispatcherName={profile.dispatcher_name} />}
+            {dispatcherTab === 'proposals' && (
+              <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
+            )}
+            {dispatcherTab === 'price_lists' && <PriceListsPage />}
+          </>
+        }
+      />
+    </Routes>
+  ) : (
+    <Routes location={location}>
+      <Route path="/dispatcher/:name" element={<DispatcherDetailPage />} />
+      <Route path="/proposals/:id" element={<ProposalDetailPage />} />
+      <Route
+        path="*"
+        element={
+          <>
+            {tab === 'work_orders' && <WorkOrdersPage role={profile.role} />}
+            {tab === 'kpi' && <KPIOverviewPage />}
+            {tab === 'analytics' && <AnalyticsPage />}
+            {tab === 'map' && <MapPage />}
+            {tab === 'proposals' && (
+              <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
+            )}
+            {tab === 'price_lists' && <PriceListsPage />}
+            {tab === 'dispatch_agent' && <DispatchAgentPage />}
+            {tab === 'users' && profile.role === 'super_admin' && <ManageUsersPage />}
+            {tab === 'clients' && profile.role === 'super_admin' && <ClientReportsPage />}
+          </>
+        }
+      />
+    </Routes>
+  )
+
+  return (
+    <div className="min-h-screen bg-canvas md:flex">
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex md:w-60 md:flex-col md:fixed md:inset-y-0 border-r border-line bg-white">
+        <BrandMark />
+        <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
+        <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
+      </aside>
+
+      {/* Mobile top bar */}
+      <div className="md:hidden sticky top-0 z-30 bg-white border-b border-line flex items-center justify-between px-4 py-3">
+        <BrandMark compact />
+        <button onClick={() => setMobileNavOpen(true)} className="btn-icon">
+          <Menu size={20} />
+        </button>
+      </div>
+
+      {/* Mobile slide-over nav */}
+      <AnimatePresence>
+        {mobileNavOpen && (
+          <>
+            <motion.div
+              className="fixed inset-0 bg-ink/40 z-40 md:hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileNavOpen(false)}
             />
-          </Routes>
-        ) : (
-          <Routes>
-            <Route path="/dispatcher/:name" element={<DispatcherDetailPage />} />
-            <Route path="/proposals/:id" element={<ProposalDetailPage />} />
-            <Route
-              path="*"
-              element={
-                <>
-                  {tab === 'work_orders' && <WorkOrdersPage role={profile.role} />}
-                  {tab === 'kpi' && <KPIOverviewPage />}
-                  {tab === 'analytics' && <AnalyticsPage />}
-                  {tab === 'map' && <MapPage />}
-                  {tab === 'proposals' && (
-                    <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
-                  )}
-                  {tab === 'price_lists' && <PriceListsPage />}
-                  {tab === 'dispatch_agent' && <DispatchAgentPage />}
-                  {tab === 'users' && profile.role === 'super_admin' && <ManageUsersPage />}
-                  {tab === 'clients' && profile.role === 'super_admin' && <ClientReportsPage />}
-                </>
-              }
-            />
-          </Routes>
+            <motion.aside
+              className="fixed inset-y-0 left-0 w-72 bg-white z-50 flex flex-col md:hidden"
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ duration: 0.22, ease: 'easeOut' }}
+            >
+              <div className="flex items-center justify-between px-4 py-4 border-b border-line-soft">
+                <BrandMark compact />
+                <button onClick={() => setMobileNavOpen(false)} className="btn-icon">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
+              <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
+            </motion.aside>
+          </>
         )}
+      </AnimatePresence>
+
+      <main className="flex-1 md:ml-60 min-w-0">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={motionKey}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {pageContent}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </main>
     </div>
   )
 }
 
-function NavTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
-    <button
-      onClick={onClick}
-      className={`inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2.5 border-b-2 transition-colors ${
-        active ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-      }`}
-    >
-      {icon} {label}
-    </button>
+    <div className={`flex items-center gap-2.5 ${compact ? '' : 'px-4 py-5 border-b border-line-soft'}`}>
+      <div className="w-8 h-8 rounded-lg bg-brand-600 text-white font-extrabold text-sm flex items-center justify-center shrink-0">
+        N
+      </div>
+      <div className="leading-tight">
+        <p className="text-sm font-bold text-ink">NGVS</p>
+        <p className="text-[11px] text-ink-faint -mt-0.5">Dispatch Console</p>
+      </div>
+    </div>
+  )
+}
+
+function UserCard({ name, role, onSignOut }: { name: string; role: string; onSignOut: () => void }) {
+  return (
+    <div className="border-t border-line-soft px-3 py-3 flex items-center gap-2.5">
+      <div className="w-8 h-8 rounded-full bg-brand-50 text-brand-700 font-bold text-xs flex items-center justify-center shrink-0">
+        {name.slice(0, 1).toUpperCase()}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-ink truncate">{name}</p>
+        <p className="text-xs text-ink-faint capitalize">{role.replace('_', ' ')}</p>
+      </div>
+      <button onClick={onSignOut} className="btn-icon" title="Sign out">
+        <LogOut size={16} />
+      </button>
+    </div>
+  )
+}
+
+function SidebarNav<T extends string>({
+  groups,
+  active,
+  onSelect,
+}: {
+  groups: NavGroup<T>[]
+  active: T
+  onSelect: (key: T) => void
+}) {
+  return (
+    <nav className="space-y-5">
+      {groups.map((group) => (
+        <div key={group.label}>
+          <p className="text-[11px] font-bold text-ink-faint px-3 mb-1.5">{group.label}</p>
+          <div className="space-y-0.5">
+            {group.items.map((item) => {
+              const isActive = item.key === active
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => onSelect(item.key)}
+                  className="relative w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-semibold text-left transition-colors"
+                  style={{ color: isActive ? 'var(--color-brand-700)' : 'var(--color-ink-soft)' }}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="nav-active-pill"
+                      className="absolute inset-0 bg-brand-50 rounded-lg"
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                    />
+                  )}
+                  <span className="relative z-10 shrink-0">{item.icon}</span>
+                  <span className="relative z-10 truncate">{item.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </nav>
   )
 }

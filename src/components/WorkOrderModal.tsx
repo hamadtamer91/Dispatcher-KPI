@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button } from './ui'
 import type { WorkOrder } from '../lib/types'
 
 interface Props {
@@ -45,10 +46,10 @@ export function WorkOrderModal({ initial, statusOptions, onClose, onSave }: Prop
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-ink/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl border border-line w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <h2 className="text-lg font-bold text-gray-900">{isNew ? 'New Work Order' : `Edit Work Order ${initial?.wo}`}</h2>
+          <h2 className="text-lg font-bold text-ink">{isNew ? 'New Work Order' : `Edit Work Order ${initial?.wo}`}</h2>
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Work Order #">
@@ -119,8 +120,8 @@ export function WorkOrderModal({ initial, statusOptions, onClose, onSave }: Prop
             <textarea value={form.tl_notes ?? ''} onChange={(e) => update('tl_notes', e.target.value)} className={inputCls} rows={2} />
           </Field>
 
-          <div className="pt-2 border-t border-gray-100">
-            <h3 className="text-sm font-bold text-gray-700 mb-3">Operational Tracking</h3>
+          <div className="pt-2 border-t border-line">
+            <h3 className="text-sm font-bold text-ink mb-3">Operational Tracking</h3>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Actual Visit Date">
                 <input type="date" value={form.actual_visit_date ?? ''} onChange={(e) => update('actual_visit_date', e.target.value)} className={inputCls} />
@@ -172,13 +173,13 @@ export function WorkOrderModal({ initial, statusOptions, onClose, onSave }: Prop
             </div>
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-danger bg-danger-tint border border-danger/20 rounded-lg p-2.5">{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-60">
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={saving}>
               {saving ? 'Saving...' : 'Save'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -186,12 +187,12 @@ export function WorkOrderModal({ initial, statusOptions, onClose, onSave }: Prop
   )
 }
 
-const inputCls = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
+const inputCls = 'field'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+      <label className="field-label">{label}</label>
       {children}
     </div>
   )

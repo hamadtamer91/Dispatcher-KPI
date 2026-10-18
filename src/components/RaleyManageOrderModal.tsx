@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { PhoneCall, UserPlus } from 'lucide-react'
+import { Badge, Button } from './ui'
 import type { DispatchOrderPatch, DispatchOrderSummary, NewDispatchTechnician } from '../lib/types'
 
 interface Props {
@@ -100,27 +101,27 @@ export function RaleyManageOrderModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-ink/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl border border-line w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="p-6 space-y-5">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-lg font-bold text-gray-900">{order.title}</h2>
-              <p className="text-sm text-gray-400 mt-0.5">
-                Status: <span className="font-medium text-gray-600">{order.status}</span>
+              <h2 className="text-lg font-bold text-ink">{order.title}</h2>
+              <p className="text-sm text-ink-faint mt-0.5 flex items-center gap-2">
+                Status: <Badge variant={isCancelled ? 'danger' : 'neutral'}>{order.status}</Badge>
               </p>
             </div>
-            <button onClick={onClose} className="text-sm text-gray-400 hover:text-gray-600">Close</button>
+            <button onClick={onClose} className="text-sm font-semibold text-ink-faint hover:text-ink-soft">Close</button>
           </div>
 
-          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5">{error}</p>}
-          {notice && !error && <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">{notice}</p>}
+          {error && <p className="text-sm text-danger bg-danger-tint border border-danger/20 rounded-lg p-2.5">{error}</p>}
+          {notice && !error && <p className="text-sm text-good bg-good-tint border border-good/20 rounded-lg p-2.5">{notice}</p>}
 
           {/* Auto-dispatch + cancel */}
-          <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg p-3">
+          <div className="flex items-center justify-between bg-canvas border border-line rounded-lg p-3">
             <div>
-              <p className="text-sm font-semibold text-gray-700">Auto-dispatch</p>
-              <p className="text-xs text-gray-400">Lets Raley keep calling technicians on its own. Checked every ~5 min.</p>
+              <p className="text-sm font-bold text-ink">Auto-dispatch</p>
+              <p className="text-xs text-ink-faint">Lets Raley keep calling technicians on its own. Checked every ~5 min.</p>
             </div>
             <div className="flex items-center gap-3">
               <label className="relative inline-flex items-center cursor-pointer">
@@ -131,13 +132,13 @@ export function RaleyManageOrderModal({
                   disabled={busy || isCancelled}
                   onChange={handleToggleAutoDispatch}
                 />
-                <div className="w-10 h-5.5 bg-gray-300 peer-checked:bg-indigo-600 rounded-full peer-disabled:opacity-50 transition-colors relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:after:translate-x-4.5" />
+                <div className="w-10 h-5.5 bg-line peer-checked:bg-brand-600 rounded-full peer-disabled:opacity-50 transition-colors relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:after:translate-x-4.5" />
               </label>
               {!isCancelled && (
                 <button
                   onClick={handleCancelOrder}
                   disabled={busy}
-                  className="text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50"
+                  className="text-xs font-semibold text-danger hover:text-danger/80 disabled:opacity-50"
                 >
                   Cancel order
                 </button>
@@ -146,13 +147,13 @@ export function RaleyManageOrderModal({
           </div>
 
           {/* Reassign technician */}
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
-            <p className="text-sm font-semibold text-gray-700">Assigned technician</p>
+          <div className="bg-canvas border border-line rounded-lg p-3 space-y-2">
+            <p className="text-sm font-bold text-ink">Assigned technician</p>
             <select
               value={order.assigned_technician_id ?? ''}
               disabled={busy || isCancelled}
               onChange={(e) => handleReassign(e.target.value)}
-              className={inputCls}
+              className="field"
             >
               <option value="">— None —</option>
               {order.technicians.map((t) => (
@@ -161,20 +162,20 @@ export function RaleyManageOrderModal({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-400">Changing this updates the record but doesn't notify the technician -- use "Call" below for that.</p>
+            <p className="text-xs text-ink-faint">Changing this updates the record but doesn't notify the technician -- use "Call" below for that.</p>
 
             {order.technicians.length > 0 && (
               <ul className="space-y-1 pt-1">
                 {order.technicians.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between text-sm py-1 border-t border-gray-200 first:border-t-0 first:pt-0">
-                    <span className="text-gray-700">
-                      {t.name}{t.company ? <span className="text-gray-400"> · {t.company}</span> : null}
-                      {t.status ? <span className="text-gray-400"> · {t.status}</span> : null}
+                  <li key={t.id} className="flex items-center justify-between text-sm py-1 border-t border-line first:border-t-0 first:pt-0">
+                    <span className="text-ink-soft">
+                      {t.name}{t.company ? <span className="text-ink-faint"> · {t.company}</span> : null}
+                      {t.status ? <span className="text-ink-faint"> · {t.status}</span> : null}
                     </span>
                     <button
                       onClick={() => onCall(order.title, order.id, t.id, t.name)}
                       disabled={busy}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:text-brand-800 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <PhoneCall size={12} />
                       {callingId === t.id ? 'Calling…' : 'Call'}
@@ -190,54 +191,46 @@ export function RaleyManageOrderModal({
                   <button
                     type="button"
                     onClick={() => setShowAddTech(true)}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 pt-1"
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:text-brand-800 pt-1"
                   >
                     <UserPlus size={12} /> Add a technician
                   </button>
                 ) : (
-                  <form onSubmit={handleAddTechnician} className="pt-2 space-y-2 border-t border-gray-200">
-                    <p className="text-xs font-semibold text-gray-600 pt-1">New technician</p>
+                  <form onSubmit={handleAddTechnician} className="pt-2 space-y-2 border-t border-line">
+                    <p className="text-xs font-bold text-ink-soft pt-1">New technician</p>
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         placeholder="Name *"
                         value={newTech.name}
                         onChange={(e) => setNewTech((t) => ({ ...t, name: e.target.value }))}
-                        className={inputCls}
+                        className="field"
                       />
                       <input
                         placeholder="Company"
                         value={newTech.company}
                         onChange={(e) => setNewTech((t) => ({ ...t, company: e.target.value }))}
-                        className={inputCls}
+                        className="field"
                       />
                       <input
                         placeholder="Phone"
                         value={newTech.phone}
                         onChange={(e) => setNewTech((t) => ({ ...t, phone: e.target.value }))}
-                        className={inputCls}
+                        className="field"
                       />
                       <input
                         placeholder="Email"
                         value={newTech.email}
                         onChange={(e) => setNewTech((t) => ({ ...t, email: e.target.value }))}
-                        className={inputCls}
+                        className="field"
                       />
                     </div>
                     <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => { setShowAddTech(false); setNewTech(EMPTY_TECH) }}
-                        className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
-                      >
+                      <Button type="button" variant="ghost" size="sm" onClick={() => { setShowAddTech(false); setNewTech(EMPTY_TECH) }}>
                         Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={addingTech || busy}
-                        className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-60"
-                      >
+                      </Button>
+                      <Button type="submit" variant="primary" size="sm" disabled={addingTech || busy}>
                         {addingTech ? 'Adding...' : 'Add technician'}
-                      </button>
+                      </Button>
                     </div>
                   </form>
                 )}
@@ -247,43 +240,43 @@ export function RaleyManageOrderModal({
 
           {/* Edit order details */}
           <form onSubmit={handleSave} className="space-y-4">
-            <p className="text-sm font-semibold text-gray-700">Order details</p>
+            <p className="text-sm font-bold text-ink">Order details</p>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Title *">
-                <input required value={form.title ?? ''} onChange={(e) => update('title', e.target.value)} className={inputCls} />
+                <input required value={form.title ?? ''} onChange={(e) => update('title', e.target.value)} className="field" />
               </Field>
               <Field label="Location *">
-                <input required value={form.location ?? ''} onChange={(e) => update('location', e.target.value)} className={inputCls} />
+                <input required value={form.location ?? ''} onChange={(e) => update('location', e.target.value)} className="field" />
               </Field>
               <Field label="Trade">
-                <input value={form.trade ?? ''} onChange={(e) => update('trade', e.target.value)} className={inputCls} />
+                <input value={form.trade ?? ''} onChange={(e) => update('trade', e.target.value)} className="field" />
               </Field>
               <Field label="Urgency">
-                <select value={form.urgency} onChange={(e) => update('urgency', e.target.value as DispatchOrderPatch['urgency'])} className={inputCls}>
+                <select value={form.urgency} onChange={(e) => update('urgency', e.target.value as DispatchOrderPatch['urgency'])} className="field">
                   <option value="Routine">Routine</option>
                   <option value="Priority">Priority</option>
                   <option value="Emergency">Emergency</option>
                 </select>
               </Field>
               <Field label="Repair Ceiling ($) *">
-                <input required type="number" min="0" step="0.01" value={form.repair_ceiling || ''} onChange={(e) => update('repair_ceiling', Number(e.target.value))} className={inputCls} />
+                <input required type="number" min="0" step="0.01" value={form.repair_ceiling || ''} onChange={(e) => update('repair_ceiling', Number(e.target.value))} className="field" />
               </Field>
               <Field label="Target Assessment Fee ($)">
-                <input type="number" min="0" step="0.01" value={form.assessment_target ?? ''} onChange={(e) => update('assessment_target', e.target.value === '' ? null : Number(e.target.value))} className={inputCls} />
+                <input type="number" min="0" step="0.01" value={form.assessment_target ?? ''} onChange={(e) => update('assessment_target', e.target.value === '' ? null : Number(e.target.value))} className="field" />
               </Field>
             </div>
             <Field label="Description">
-              <textarea value={form.description ?? ''} onChange={(e) => update('description', e.target.value)} className={inputCls} rows={2} />
+              <textarea value={form.description ?? ''} onChange={(e) => update('description', e.target.value)} className="field" rows={2} />
             </Field>
             <Field label="Ground Rules">
-              <textarea value={form.ground_rules ?? ''} onChange={(e) => update('ground_rules', e.target.value)} className={inputCls} rows={2} />
+              <textarea value={form.ground_rules ?? ''} onChange={(e) => update('ground_rules', e.target.value)} className="field" rows={2} />
             </Field>
 
             <div className="flex justify-end gap-2 pt-1">
-              <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Done</button>
-              <button type="submit" disabled={saving || busy} className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-60">
+              <Button type="button" variant="ghost" onClick={onClose}>Done</Button>
+              <Button type="submit" variant="primary" disabled={saving || busy}>
                 {saving ? 'Saving...' : 'Save changes'}
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -292,12 +285,10 @@ export function RaleyManageOrderModal({
   )
 }
 
-const inputCls = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+      <label className="field-label">{label}</label>
       {children}
     </div>
   )

@@ -70,7 +70,7 @@ function FitBounds({ sites }: { sites: Site[] }) {
 function statusPill(status: string | null | undefined) {
   const color = statusColor(status)
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+    <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
       <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
       {status || 'Unknown'}
     </span>
@@ -79,30 +79,30 @@ function statusPill(status: string | null | undefined) {
 
 function JobDetail({ w }: { w: WorkOrder }) {
   return (
-    <div className="py-2 first:pt-0 not-last:border-b border-gray-100 space-y-1">
+    <div className="py-2 first:pt-0 not-last:border-b border-line space-y-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-gray-900 text-sm">WO {w.wo}</span>
+        <span className="font-semibold text-ink text-sm">WO {w.wo}</span>
         {statusPill(w.status)}
       </div>
-      <p className="text-xs text-gray-600">
-        <span className="text-gray-400">Store:</span> {w.client || 'Unassigned'}
-        {w.dispatcher && <> · <span className="text-gray-400">Dispatcher:</span> {w.dispatcher}</>}
+      <p className="text-xs text-ink-soft">
+        <span className="text-ink-faint">Store:</span> {w.client || 'Unassigned'}
+        {w.dispatcher && <> · <span className="text-ink-faint">Dispatcher:</span> {w.dispatcher}</>}
       </p>
       {(w.trade || w.subtrade) && (
-        <p className="text-xs text-gray-600">
-          <span className="text-gray-400">Trade:</span> {[w.trade, w.subtrade].filter(Boolean).join(' / ')}
+        <p className="text-xs text-ink-soft">
+          <span className="text-ink-faint">Trade:</span> {[w.trade, w.subtrade].filter(Boolean).join(' / ')}
         </p>
       )}
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-ink-faint">
         {[w.address, w.city, w.state].filter(Boolean).join(', ')}
       </p>
       {(w.cost !== null || w.nte !== null) && (
-        <p className="text-xs text-gray-600">
+        <p className="text-xs text-ink-soft">
           {w.cost !== null && <>Cost: ${w.cost?.toFixed(2)} </>}
           {w.nte !== null && <>· NTE: ${w.nte?.toFixed(2)}</>}
         </p>
       )}
-      {w.wo_date && <p className="text-xs text-gray-400">Opened {w.wo_date}</p>}
+      {w.wo_date && <p className="text-xs text-ink-faint">Opened {w.wo_date}</p>}
     </div>
   )
 }
@@ -173,12 +173,12 @@ export function WorkOrdersMap({
             placeholder="Search WO #, store, dispatcher, address..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-72 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="field w-72"
           />
           <select
             value={store}
             onChange={(e) => setStore(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="field w-auto"
           >
             <option value="">All stores</option>
             {stores.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -190,10 +190,10 @@ export function WorkOrdersMap({
                 <button
                   key={s}
                   onClick={() => toggleStatus(s)}
-                  className={`text-xs font-medium px-2.5 py-1.5 rounded-full border transition-colors ${
+                  className={`text-xs font-semibold px-2.5 py-1.5 rounded-full border transition-colors ${
                     active
-                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                      ? 'bg-brand-600 border-brand-600 text-white'
+                      : 'bg-white border-line text-ink-soft hover:bg-canvas'
                   }`}
                 >
                   {s}
@@ -201,7 +201,7 @@ export function WorkOrdersMap({
               )
             })}
             {statusFilter.size > 0 && (
-              <button onClick={() => setStatusFilter(new Set())} className="text-xs font-medium text-gray-400 hover:text-gray-600 px-2 py-1.5">
+              <button onClick={() => setStatusFilter(new Set())} className="text-xs font-semibold text-ink-faint hover:text-ink-soft px-2 py-1.5">
                 Clear
               </button>
             )}
@@ -209,13 +209,13 @@ export function WorkOrdersMap({
         </div>
       )}
 
-      <p className="text-xs text-gray-400">
+      <p className="text-xs text-ink-faint">
         {geocodedCount} of {filtered.length} work orders placed on the map across {sites.length} site{sites.length === 1 ? '' : 's'}.
         {pendingCount > 0 && ` ${pendingCount} more are being located in the background (checks every couple of minutes).`}
         {noAddressCount > 0 && ` ${noAddressCount} have no address on file.`}
       </p>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" style={{ height }}>
+      <div className="panel overflow-hidden" style={{ height }}>
         <MapContainer center={US_CENTER} zoom={4} style={{ height: '100%', width: '100%' }} scrollWheelZoom>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

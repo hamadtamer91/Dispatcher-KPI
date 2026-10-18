@@ -10,6 +10,7 @@ import {
   REASSIGNED_STATUSES,
 } from '../lib/kpi'
 import { StatTile, ChartCard, HBarChart, Histogram, TrendLine, Legend, CHART_COLORS, formatMonth } from '../components/charts'
+import { PageHeader } from '../components/ui'
 
 const SCORE_BUCKETS = [
   { label: '0-20', min: 0, max: 20 },
@@ -40,11 +41,11 @@ export function AnalyticsPage() {
   const avgComposite = kpis.length ? kpis.reduce((a, k) => a + k.compositeScore, 0) / kpis.length : 0
 
   if (woLoading || pLoading) {
-    return <p className="text-sm text-gray-400 py-8 text-center">Loading analytics...</p>
+    return <p className="text-sm text-ink-faint py-8 text-center">Loading analytics...</p>
   }
 
   if (!analytics.totalJobs) {
-    return <p className="text-sm text-gray-400 py-8 text-center">No work orders yet to analyze.</p>
+    return <p className="text-sm text-ink-faint py-8 text-center">No work orders yet to analyze.</p>
   }
 
   const statusBars = analytics.statusCounts.map((s) => {
@@ -96,6 +97,8 @@ export function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
+      <PageHeader title="Analytics" description="How the whole operation is performing, across every work order on file." />
+
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         <StatTile label="Total Work Orders" value={analytics.totalJobs} />
         <StatTile label="Active Dispatchers" value={analytics.totalDispatchers} />
@@ -158,8 +161,8 @@ export function AnalyticsPage() {
         </div>
       </div>
 
-      <div>
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wide mb-3">Operational KPIs</h2>
+      <div className="pt-2 border-t border-line">
+        <h2 className="text-base font-bold text-ink mt-4 mb-3">Operational KPIs</h2>
         <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
           <StatTile
             label="Missed ETA"

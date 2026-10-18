@@ -3,33 +3,33 @@
 // dashboard's existing design tokens (white cards, gray-50 page, Tailwind utility classes).
 
 export const CHART_COLORS = {
-  blue: '#2a78d6',
+  blue: '#0f6e66',
   orange: '#eb6834',
   aqua: '#1baf7a',
   gray: '#aeada7',
-  good: '#0ca30c',
-  critical: '#d03b3b',
+  good: '#157f4b',
+  critical: '#c0362c',
   divergingRed: '#e34948',
-  gridline: '#e1e0d9',
-  muted: '#898781',
+  gridline: '#e3e7ea',
+  muted: '#93999f',
 }
 
 export function StatTile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</p>
-      <p className="text-3xl font-bold text-gray-900 mt-1.5 tabular-nums">{value}</p>
-      {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
+    <div className="panel p-5">
+      <p className="text-xs font-semibold text-ink-soft">{label}</p>
+      <p className="text-3xl font-extrabold text-ink mt-1.5 tabular-nums">{value}</p>
+      {hint && <p className="text-xs text-ink-faint mt-1">{hint}</p>}
     </div>
   )
 }
 
 export function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+    <div className="panel p-5">
       <div className="mb-4">
-        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
-        {subtitle && <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>}
+        <h3 className="text-sm font-bold text-ink">{title}</h3>
+        {subtitle && <p className="text-xs text-ink-faint mt-0.5">{subtitle}</p>}
       </div>
       {children}
     </div>
@@ -44,17 +44,17 @@ export interface BarDatum {
 
 /** Horizontal bar chart -- reads best for categorical labels (status names, dispatcher names). */
 export function HBarChart({ data, unit = '', emptyText = 'No data yet.' }: { data: BarDatum[]; unit?: string; emptyText?: string }) {
-  if (!data.length) return <p className="text-sm text-gray-400 py-6 text-center">{emptyText}</p>
+  if (!data.length) return <p className="text-sm text-ink-faint py-6 text-center">{emptyText}</p>
   const max = Math.max(1, ...data.map((d) => d.value))
   return (
     <div className="space-y-2.5">
       {data.map((d) => (
         <div key={d.label} title={`${d.label}: ${d.value}${unit}`}>
           <div className="flex justify-between gap-3 text-xs mb-1">
-            <span className="text-gray-700 font-medium truncate">{d.label}</span>
-            <span className="text-gray-500 tabular-nums shrink-0">{d.value}{unit}</span>
+            <span className="text-ink-soft font-medium truncate">{d.label}</span>
+            <span className="text-ink-faint tabular-nums shrink-0">{d.value}{unit}</span>
           </div>
-          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-2.5 bg-line-soft rounded-full overflow-hidden">
             <div
               className="h-full rounded-full"
               style={{ width: `${Math.max(2, (d.value / max) * 100)}%`, backgroundColor: d.color ?? CHART_COLORS.blue }}
@@ -80,7 +80,7 @@ export function Histogram({ bins, height = 150, unit = '' }: { bins: HistBin[]; 
       <div className="flex items-end gap-2" style={{ height }}>
         {bins.map((b) => (
           <div key={b.label} className="flex-1 flex flex-col items-center justify-end h-full group min-w-0">
-            <span className="text-[11px] text-gray-500 mb-1 tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">
+            <span className="text-[11px] text-ink-faint mb-1 tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">
               {b.value}{unit}
             </span>
             <div
@@ -97,7 +97,7 @@ export function Histogram({ bins, height = 150, unit = '' }: { bins: HistBin[]; 
       </div>
       <div className="flex gap-2 mt-2">
         {bins.map((b) => (
-          <div key={b.label} className="flex-1 text-center text-[11px] text-gray-400 truncate min-w-0">
+          <div key={b.label} className="flex-1 text-center text-[11px] text-ink-faint truncate min-w-0">
             {b.label}
           </div>
         ))}
@@ -109,7 +109,7 @@ export function Histogram({ bins, height = 150, unit = '' }: { bins: HistBin[]; 
 /** Single-series trend line with a filled area, gridlines, and per-point hover tooltips. */
 export function TrendLine({ points, height = 150, unit = '' }: { points: { label: string; value: number }[]; height?: number; unit?: string }) {
   if (points.length < 2) {
-    return <p className="text-sm text-gray-400 py-6 text-center">Not enough data yet for a trend.</p>
+    return <p className="text-sm text-ink-faint py-6 text-center">Not enough data yet for a trend.</p>
   }
   const max = Math.max(1, ...points.map((p) => p.value))
   const w = 100
@@ -139,7 +139,7 @@ export function TrendLine({ points, height = 150, unit = '' }: { points: { label
       </svg>
       <div className="flex mt-1.5">
         {points.map((p) => (
-          <div key={p.label} className="flex-1 text-center text-[11px] text-gray-400 truncate min-w-0">
+          <div key={p.label} className="flex-1 text-center text-[11px] text-ink-faint truncate min-w-0">
             {p.label}
           </div>
         ))}
@@ -157,9 +157,9 @@ export function formatMonth(ym: string): string {
 
 export function Legend({ items }: { items: { label: string; color: string }[] }) {
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-4 pt-3 border-t border-gray-100">
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-4 pt-3 border-t border-line">
       {items.map((i) => (
-        <div key={i.label} className="flex items-center gap-1.5 text-xs text-gray-500">
+        <div key={i.label} className="flex items-center gap-1.5 text-xs text-ink-faint">
           <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: i.color }} />
           {i.label}
         </div>

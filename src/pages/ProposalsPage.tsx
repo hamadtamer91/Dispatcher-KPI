@@ -4,14 +4,16 @@ import { Plus } from 'lucide-react'
 import { useProposals } from '../hooks/useProposals'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { PROPOSAL_STATUS_LABELS } from '../lib/types'
-import type { Role } from '../lib/types'
+import type { ProposalStatus, Role } from '../lib/types'
+import { Badge, Button, PageHeader } from '../components/ui'
+import type { BadgeVariant } from '../components/ui'
 
-const STATUS_STYLES: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600',
-  ai_generated: 'bg-indigo-50 text-indigo-700',
-  in_review: 'bg-amber-50 text-amber-700',
-  approved: 'bg-emerald-50 text-emerald-700',
-  sent: 'bg-sky-50 text-sky-700',
+const STATUS_VARIANT: Record<ProposalStatus, BadgeVariant> = {
+  draft: 'neutral',
+  ai_generated: 'brand',
+  in_review: 'warn',
+  approved: 'good',
+  sent: 'good',
 }
 
 export function ProposalsPage({ role, dispatcherName }: { role: Role; dispatcherName: string | null }) {
@@ -41,45 +43,43 @@ export function ProposalsPage({ role, dispatcherName }: { role: Role; dispatcher
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-lg font-bold text-gray-900">Proposals</h2>
-        <div className="flex items-center gap-2">
-          <input
-            value={newWo}
-            onChange={(e) => setNewWo(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-            placeholder="Work order #"
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <button
-            onClick={handleCreate}
-            disabled={creating || !newWo.trim()}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 rounded-lg px-3 py-2 hover:bg-indigo-700 disabled:opacity-50"
-          >
-            <Plus size={14} /> New Proposal
-          </button>
-        </div>
-      </div>
-      {createErr && <p className="text-sm text-red-600">{createErr}</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <PageHeader
+        title="Proposals"
+        actions={
+          <>
+            <input
+              value={newWo}
+              onChange={(e) => setNewWo(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+              placeholder="Work order #"
+              className="field w-40"
+            />
+            <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={creating || !newWo.trim()} onClick={handleCreate}>
+              New Proposal
+            </Button>
+          </>
+        }
+      />
+      {createErr && <p className="text-sm text-danger">{createErr}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+      <div className="panel overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="px-4 py-3 font-semibold">WO</th>
-              <th className="px-4 py-3 font-semibold">Store</th>
-              <th className="px-4 py-3 font-semibold">Dispatcher</th>
-              <th className="px-4 py-3 font-semibold">Status</th>
-              <th className="px-4 py-3 font-semibold">Version</th>
-              <th className="px-4 py-3 font-semibold text-right">Price</th>
-              <th className="px-4 py-3 font-semibold">Updated</th>
+            <tr className="table-head-row">
+              <th className="px-4 py-3">WO</th>
+              <th className="px-4 py-3">Store</th>
+              <th className="px-4 py-3">Dispatcher</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Version</th>
+              <th className="px-4 py-3 text-right">Price</th>
+              <th className="px-4 py-3">Updated</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={7} className="text-center text-gray-400 py-8">Loading...</td>
+                <td colSpan={7} className="text-center text-ink-faint py-8">Loading...</td>
               </tr>
             )}
             {!loading &&
@@ -88,20 +88,18 @@ export function ProposalsPage({ role, dispatcherName }: { role: Role; dispatcher
                 return (
                   <tr
                     key={p.id}
-                    className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                    className="table-row cursor-pointer"
                     onClick={() => navigate(`/proposals/${p.id}`)}
                   >
-                    <td className="px-4 py-2.5 font-medium text-gray-900">{p.wo}</td>
-                    <td className="px-4 py-2.5 text-gray-600">{wo?.client || '—'}</td>
-                    <td className="px-4 py-2.5 text-gray-600">{p.dispatcher_name || '—'}</td>
+                    <td className="px-4 py-2.5 font-semibold text-ink">{p.wo}</td>
+                    <td className="px-4 py-2.5 text-ink-soft">{wo?.client || '—'}</td>
+                    <td className="px-4 py-2.5 text-ink-soft">{p.dispatcher_name || '—'}</td>
                     <td className="px-4 py-2.5">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[p.status]}`}>
-                        {PROPOSAL_STATUS_LABELS[p.status]}
-                      </span>
+                      <Badge variant={STATUS_VARIANT[p.status]}>{PROPOSAL_STATUS_LABELS[p.status]}</Badge>
                     </td>
-                    <td className="px-4 py-2.5 text-gray-500">v{p.version}</td>
-                    <td className="px-4 py-2.5 text-right text-gray-700">${p.subtotal_price.toFixed(2)}</td>
-                    <td className="px-4 py-2.5 text-gray-400 whitespace-nowrap">
+                    <td className="px-4 py-2.5 text-ink-faint">v{p.version}</td>
+                    <td className="px-4 py-2.5 text-right text-ink tabular-nums">${p.subtotal_price.toFixed(2)}</td>
+                    <td className="px-4 py-2.5 text-ink-faint whitespace-nowrap">
                       {new Date(p.updated_at).toLocaleDateString()}
                     </td>
                   </tr>
@@ -109,7 +107,7 @@ export function ProposalsPage({ role, dispatcherName }: { role: Role; dispatcher
               })}
             {!loading && !proposals.length && (
               <tr>
-                <td colSpan={7} className="text-center text-gray-400 py-8">No proposals yet.</td>
+                <td colSpan={7} className="text-center text-ink-faint py-8">No proposals yet.</td>
               </tr>
             )}
           </tbody>

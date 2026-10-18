@@ -5,6 +5,8 @@ import type { WorkOrder, Role } from '../lib/types'
 import { STATUS_OPTIONS } from '../lib/types'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { WorkOrderModal } from '../components/WorkOrderModal'
+import { DONE_STATUSES, REASSIGNED_STATUSES } from '../lib/kpi'
+import { Badge, Button, PageHeader } from '../components/ui'
 
 const COLUMNS: (keyof WorkOrder)[] = [
   'wo', 'dispatcher', 'client', 'status', 'wo_date', 'eta', 'trade', 'subtrade',
@@ -20,6 +22,13 @@ const COLUMN_LABELS: Partial<Record<keyof WorkOrder, string>> = {
 
 function columnLabel(c: keyof WorkOrder): string {
   return COLUMN_LABELS[c] ?? c.replace(/_/g, ' ')
+}
+
+function statusBadge(status: string | null) {
+  if (!status) return <span className="text-ink-faint">—</span>
+  const lower = status.toLowerCase()
+  const variant = DONE_STATUSES.has(lower) ? 'good' : REASSIGNED_STATUSES.has(lower) ? 'danger' : 'neutral'
+  return <Badge variant={variant}>{status}</Badge>
 }
 
 // CSV header names that should map onto the internal `client` field on import,
@@ -91,75 +100,72 @@ export function WorkOrdersPage({ role }: { role: Role }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <input
-          type="text"
-          placeholder="Search work orders..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-        <div className="flex gap-2">
-          <button
-            onClick={() => downloadCSV('work_orders.csv', filtered)}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50"
-          >
-            <Download size={14} /> Export
-          </button>
-          {canEdit && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={(e) => e.target.files?.[0] && handleImport(e.target.files[0])}
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50"
-              >
-                <Upload size={14} /> Import CSV
-              </button>
-              <button
-                onClick={() => { setEditing(null); setShowModal(true) }}
-                className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 rounded-lg px-3 py-2 hover:bg-indigo-700"
-              >
-                <Plus size={14} /> New Work Order
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title="Work Orders"
+        actions={
+          <>
+            <Button variant="secondary" size="sm" icon={<Download size={14} />} onClick={() => downloadCSV('work_orders.csv', filtered)}>
+              Export
+            </Button>
+            {canEdit && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && handleImport(e.target.files[0])}
+                />
+                <Button variant="secondary" size="sm" icon={<Upload size={14} />} onClick={() => fileInputRef.current?.click()}>
+                  Import CSV
+                </Button>
+                <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => { setEditing(null); setShowModal(true) }}>
+                  New Work Order
+                </Button>
+              </>
+            )}
+          </>
+        }
+      />
 
-      {importMsg && <p className="text-sm text-gray-500">{importMsg}</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <input
+        type="text"
+        placeholder="Search work orders..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="field w-full sm:w-72"
+      />
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+      {importMsg && <p className="text-sm text-ink-soft">{importMsg}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
+
+      <div className="panel overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
+            <tr className="table-head-row">
               {COLUMNS.map((c) => (
-                <th key={c} className="px-4 py-3 font-semibold">{columnLabel(c)}</th>
+                <th key={c} className="px-4 py-3">{columnLabel(c)}</th>
               ))}
               {canEdit && <th className="px-4 py-3" />}
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={COLUMNS.length + 1} className="text-center text-gray-400 py-8">Loading...</td></tr>
+              <tr><td colSpan={COLUMNS.length + 1} className="text-center text-ink-faint py-8">Loading...</td></tr>
             )}
             {!loading && filtered.map((w) => (
-              <tr key={w.wo} className="border-b border-gray-100 hover:bg-gray-50">
+              <tr key={w.wo} className="table-row">
                 {COLUMNS.map((c) => (
-                  <td key={c} className="px-4 py-2.5 text-gray-700 whitespace-nowrap">{String(w[c] ?? '—')}</td>
+                  <td key={c} className="px-4 py-2.5 text-ink whitespace-nowrap">
+                    {c === 'status' ? statusBadge(w.status) : String(w[c] ?? '—')}
+                  </td>
                 ))}
                 {canEdit && (
                   <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                    <button onClick={() => { setEditing(w); setShowModal(true) }} className="text-gray-400 hover:text-indigo-600 mr-2">
+                    <button onClick={() => { setEditing(w); setShowModal(true) }} className="btn-icon mr-1">
                       <Pencil size={14} />
                     </button>
-                    <button onClick={() => handleDelete(w.wo)} className="text-gray-400 hover:text-red-600">
+                    <button onClick={() => handleDelete(w.wo)} className="btn-icon hover:text-danger">
                       <Trash2 size={14} />
                     </button>
                   </td>
@@ -167,7 +173,7 @@ export function WorkOrdersPage({ role }: { role: Role }) {
               </tr>
             ))}
             {!loading && !filtered.length && (
-              <tr><td colSpan={COLUMNS.length + 1} className="text-center text-gray-400 py-8">
+              <tr><td colSpan={COLUMNS.length + 1} className="text-center text-ink-faint py-8">
                 {wos.length ? 'No work orders match the current filters/search.' : 'No work orders yet.'}
               </td></tr>
             )}

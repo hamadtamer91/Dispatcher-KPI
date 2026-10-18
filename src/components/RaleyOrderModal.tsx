@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button } from './ui'
 import type { NewDispatchOrder } from '../lib/types'
 
 interface Props {
@@ -46,58 +47,58 @@ export function RaleyOrderModal({ onClose, onCreate }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-ink/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl border border-line w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">New Work Order for Raley</h2>
-            <p className="text-sm text-gray-400 mt-0.5">This creates a real order in Raley's system. If auto-dispatch is on, it starts calling technicians.</p>
+            <h2 className="text-lg font-bold text-ink">New Work Order for Raley</h2>
+            <p className="text-sm text-ink-faint mt-0.5">This creates a real order in Raley's system. If auto-dispatch is on, it starts calling technicians.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Title *">
-              <input required value={form.title} onChange={(e) => update('title', e.target.value)} className={inputCls} />
+              <input required value={form.title} onChange={(e) => update('title', e.target.value)} className="field" />
             </Field>
             <Field label="Location *">
-              <input required value={form.location} onChange={(e) => update('location', e.target.value)} className={inputCls} placeholder="Address or site name" />
+              <input required value={form.location} onChange={(e) => update('location', e.target.value)} className="field" placeholder="Address or site name" />
             </Field>
             <Field label="Trade">
-              <input value={form.trade ?? ''} onChange={(e) => update('trade', e.target.value)} className={inputCls} placeholder="Plumbing, HVAC, …" />
+              <input value={form.trade ?? ''} onChange={(e) => update('trade', e.target.value)} className="field" placeholder="Plumbing, HVAC, …" />
             </Field>
             <Field label="Urgency">
-              <select value={form.urgency} onChange={(e) => update('urgency', e.target.value as NewDispatchOrder['urgency'])} className={inputCls}>
+              <select value={form.urgency} onChange={(e) => update('urgency', e.target.value as NewDispatchOrder['urgency'])} className="field">
                 <option value="Routine">Routine</option>
                 <option value="Priority">Priority</option>
                 <option value="Emergency">Emergency</option>
               </select>
             </Field>
             <Field label="Repair Ceiling ($) *">
-              <input required type="number" min="0" step="0.01" value={form.repair_ceiling || ''} onChange={(e) => update('repair_ceiling', Number(e.target.value))} className={inputCls} />
+              <input required type="number" min="0" step="0.01" value={form.repair_ceiling || ''} onChange={(e) => update('repair_ceiling', Number(e.target.value))} className="field" />
             </Field>
             <Field label="Target Assessment Fee ($)">
-              <input type="number" min="0" step="0.01" value={form.assessment_target ?? ''} onChange={(e) => update('assessment_target', e.target.value === '' ? null : Number(e.target.value))} className={inputCls} />
+              <input type="number" min="0" step="0.01" value={form.assessment_target ?? ''} onChange={(e) => update('assessment_target', e.target.value === '' ? null : Number(e.target.value))} className="field" />
             </Field>
           </div>
 
           <Field label="Description">
-            <textarea value={form.description ?? ''} onChange={(e) => update('description', e.target.value)} className={inputCls} rows={2} />
+            <textarea value={form.description ?? ''} onChange={(e) => update('description', e.target.value)} className="field" rows={2} />
           </Field>
           <Field label="Ground Rules">
-            <textarea value={form.ground_rules ?? ''} onChange={(e) => update('ground_rules', e.target.value)} className={inputCls} rows={2} placeholder="Anything Raley should know before negotiating" />
+            <textarea value={form.ground_rules ?? ''} onChange={(e) => update('ground_rules', e.target.value)} className="field" rows={2} placeholder="Anything Raley should know before negotiating" />
           </Field>
 
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={!!form.auto_dispatch} onChange={(e) => update('auto_dispatch', e.target.checked)} />
+          <label className="flex items-center gap-2 text-sm text-ink-soft">
+            <input type="checkbox" checked={!!form.auto_dispatch} onChange={(e) => update('auto_dispatch', e.target.checked)} className="accent-brand-600" />
             Let Raley auto-dispatch (start calling technicians on its own)
           </label>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-danger bg-danger-tint border border-danger/20 rounded-lg p-2.5">{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-60">
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={saving}>
               {saving ? 'Creating...' : 'Create Order'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -105,12 +106,10 @@ export function RaleyOrderModal({ onClose, onCreate }: Props) {
   )
 }
 
-const inputCls = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+      <label className="field-label">{label}</label>
       {children}
     </div>
   )

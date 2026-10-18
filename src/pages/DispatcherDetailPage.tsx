@@ -7,6 +7,7 @@ import { computeDispatcherKPIs } from '../lib/kpi'
 import type { WorkOrder } from '../lib/types'
 import { DispatcherStats } from '../components/DispatcherStats'
 import { WorkOrdersMap } from '../components/WorkOrdersMap'
+import { PageHeader } from '../components/ui'
 
 const DETAIL_COLUMNS: (keyof WorkOrder)[] = [
   'wo', 'status', 'client', 'wo_date', 'eta', 'trade', 'subtrade',
@@ -44,33 +45,33 @@ export function DispatcherDetailPage() {
   )
 
   if (woLoading || pLoading) {
-    return <p className="text-sm text-gray-400 py-8 text-center">Loading...</p>
+    return <p className="text-sm text-ink-faint py-8 text-center">Loading...</p>
   }
 
   return (
     <div className="space-y-6">
       <button
         onClick={() => navigate('/')}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-700"
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-soft hover:text-ink transition-colors"
       >
         <ArrowLeft size={14} /> Back to KPI Overview
       </button>
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-gray-900">{dispatcherName}</h2>
-          <p className="text-sm text-gray-400">{mine.length} work orders total</p>
-        </div>
-        {kpi && (
-          <div className="text-right">
-            <p className="text-3xl font-bold text-indigo-600">{kpi.compositeScore.toFixed(0)}</p>
-            <p className="text-xs text-gray-400">Composite score</p>
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title={dispatcherName}
+        description={`${mine.length} work orders total`}
+        actions={
+          kpi && (
+            <div className="text-right">
+              <p className="text-3xl font-extrabold text-brand-700 tabular-nums">{kpi.compositeScore.toFixed(0)}</p>
+              <p className="text-xs text-ink-faint">Composite score</p>
+            </div>
+          )
+        }
+      />
 
       {!kpi && (
-        <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <p className="text-sm text-warn bg-warn-tint border border-warn/20 rounded-lg p-4">
           No work orders found for this dispatcher.
         </p>
       )}
@@ -80,28 +81,28 @@ export function DispatcherDetailPage() {
           <DispatcherStats workOrders={mine} kpi={kpi} profile={profile} />
 
           <div>
-            <p className="text-sm font-semibold text-gray-700 mb-3">Jobs on the Map</p>
+            <p className="text-sm font-bold text-ink mb-3">Jobs on the Map</p>
             <WorkOrdersMap workOrders={mine} height={420} />
           </div>
         </>
       )}
 
       <div>
-        <p className="text-sm font-semibold text-gray-700 mb-3">All Work Orders</p>
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+        <p className="text-sm font-bold text-ink mb-3">All Work Orders</p>
+        <div className="panel overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
+              <tr className="table-head-row">
                 {DETAIL_COLUMNS.map((c) => (
-                  <th key={c} className="px-4 py-3 font-semibold whitespace-nowrap">{columnLabel(c)}</th>
+                  <th key={c} className="px-4 py-3 whitespace-nowrap">{columnLabel(c)}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {mine.map((w) => (
-                <tr key={w.wo} className="border-b border-gray-100 hover:bg-gray-50">
+                <tr key={w.wo} className="table-row">
                   {DETAIL_COLUMNS.map((c) => (
-                    <td key={c} className="px-4 py-2.5 text-gray-700 whitespace-nowrap">
+                    <td key={c} className="px-4 py-2.5 text-ink-soft whitespace-nowrap">
                       {String(w[c] ?? '—')}
                     </td>
                   ))}
@@ -109,7 +110,7 @@ export function DispatcherDetailPage() {
               ))}
               {!mine.length && (
                 <tr>
-                  <td colSpan={DETAIL_COLUMNS.length} className="text-center text-gray-400 py-8">
+                  <td colSpan={DETAIL_COLUMNS.length} className="text-center text-ink-faint py-8">
                     No work orders.
                   </td>
                 </tr>

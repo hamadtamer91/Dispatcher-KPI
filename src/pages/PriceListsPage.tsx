@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { usePriceLists } from '../hooks/usePriceLists'
+import { Button, PageHeader } from '../components/ui'
 
 export function PriceListsPage() {
   const { laborRates, parts, loading, error, saveLaborRate, deleteLaborRate, savePart, deletePart } = usePriceLists()
@@ -12,38 +13,36 @@ export function PriceListsPage() {
   const [newPartUnit, setNewPartUnit] = useState('ea')
 
   if (loading) {
-    return <p className="text-sm text-gray-400 py-8 text-center">Loading price lists...</p>
+    return <p className="text-sm text-ink-faint py-8 text-center">Loading price lists...</p>
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-bold text-gray-900">Price Lists</h2>
-        <p className="text-sm text-gray-400">
-          Used to price proposal line items. Markup is set per-proposal; these are cost-side rates.
-        </p>
-      </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <PageHeader
+        title="Price Lists"
+        description="Used to price proposal line items. Markup is set per-proposal; these are cost-side rates."
+      />
+      {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-gray-700">Labor Rates</h3>
+      <div className="panel p-5 space-y-3">
+        <h3 className="text-sm font-bold text-ink">Labor Rates</h3>
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 uppercase tracking-wide border-b border-gray-200">
-              <th className="py-2 font-semibold">Role</th>
-              <th className="py-2 font-semibold">Hourly Cost</th>
-              <th className="py-2 font-semibold">Active</th>
+            <tr className="table-head-row">
+              <th className="py-2">Role</th>
+              <th className="py-2">Hourly Cost</th>
+              <th className="py-2">Active</th>
               <th className="py-2" />
             </tr>
           </thead>
           <tbody>
             {laborRates.map((r) => (
-              <tr key={r.id} className="border-b border-gray-100">
+              <tr key={r.id} className="table-row">
                 <td className="py-2 pr-3">
                   <input
                     defaultValue={r.role_name}
                     onBlur={(e) => e.target.value !== r.role_name && saveLaborRate({ id: r.id, role_name: e.target.value })}
-                    className="rounded border border-transparent hover:border-gray-200 focus:border-indigo-400 px-1.5 py-1 text-sm"
+                    className="field-inline"
                   />
                 </td>
                 <td className="py-2 pr-3">
@@ -51,7 +50,7 @@ export function PriceListsPage() {
                     type="number"
                     defaultValue={r.hourly_cost}
                     onBlur={(e) => saveLaborRate({ id: r.id, hourly_cost: Number(e.target.value) || 0 })}
-                    className="w-24 rounded border border-transparent hover:border-gray-200 focus:border-indigo-400 px-1.5 py-1 text-sm"
+                    className="field-inline w-24"
                   />
                 </td>
                 <td className="py-2 pr-3">
@@ -62,7 +61,7 @@ export function PriceListsPage() {
                   />
                 </td>
                 <td className="py-2 text-right">
-                  <button onClick={() => deleteLaborRate(r.id)} className="text-gray-400 hover:text-red-600">
+                  <button onClick={() => deleteLaborRate(r.id)} className="btn-icon hover:text-danger">
                     <Trash2 size={14} />
                   </button>
                 </td>
@@ -70,67 +69,57 @@ export function PriceListsPage() {
             ))}
             {!laborRates.length && (
               <tr>
-                <td colSpan={4} className="text-center text-gray-400 py-4">No labor roles yet.</td>
+                <td colSpan={4} className="text-center text-ink-faint py-4">No labor roles yet.</td>
               </tr>
             )}
           </tbody>
         </table>
         <div className="flex items-end gap-2 pt-2 flex-wrap">
-          <input
-            placeholder="Role name"
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-48"
-          />
-          <input
-            placeholder="Hourly cost"
-            type="number"
-            value={newRoleCost}
-            onChange={(e) => setNewRoleCost(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-32"
-          />
-          <button
+          <input placeholder="Role name" value={newRole} onChange={(e) => setNewRole(e.target.value)} className="field w-48" />
+          <input placeholder="Hourly cost" type="number" value={newRoleCost} onChange={(e) => setNewRoleCost(e.target.value)} className="field w-32" />
+          <Button
+            variant="secondary"
+            icon={<Plus size={14} />}
             onClick={async () => {
               if (!newRole.trim()) return
               await saveLaborRate({ role_name: newRole.trim(), hourly_cost: Number(newRoleCost) || 0 })
               setNewRole('')
               setNewRoleCost('')
             }}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50"
           >
-            <Plus size={14} /> Add Role
-          </button>
+            Add Role
+          </Button>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-gray-700">Parts Catalog</h3>
+      <div className="panel p-5 space-y-3">
+        <h3 className="text-sm font-bold text-ink">Parts Catalog</h3>
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 uppercase tracking-wide border-b border-gray-200">
-              <th className="py-2 font-semibold">Name</th>
-              <th className="py-2 font-semibold">SKU</th>
-              <th className="py-2 font-semibold">Unit Cost</th>
-              <th className="py-2 font-semibold">Unit</th>
-              <th className="py-2 font-semibold">Active</th>
+            <tr className="table-head-row">
+              <th className="py-2">Name</th>
+              <th className="py-2">SKU</th>
+              <th className="py-2">Unit Cost</th>
+              <th className="py-2">Unit</th>
+              <th className="py-2">Active</th>
               <th className="py-2" />
             </tr>
           </thead>
           <tbody>
             {parts.map((p) => (
-              <tr key={p.id} className="border-b border-gray-100">
+              <tr key={p.id} className="table-row">
                 <td className="py-2 pr-3">
                   <input
                     defaultValue={p.name}
                     onBlur={(e) => e.target.value !== p.name && savePart({ id: p.id, name: e.target.value })}
-                    className="rounded border border-transparent hover:border-gray-200 focus:border-indigo-400 px-1.5 py-1 text-sm"
+                    className="field-inline"
                   />
                 </td>
                 <td className="py-2 pr-3">
                   <input
                     defaultValue={p.sku ?? ''}
                     onBlur={(e) => savePart({ id: p.id, sku: e.target.value || null })}
-                    className="w-24 rounded border border-transparent hover:border-gray-200 focus:border-indigo-400 px-1.5 py-1 text-sm"
+                    className="field-inline w-24"
                   />
                 </td>
                 <td className="py-2 pr-3">
@@ -138,14 +127,14 @@ export function PriceListsPage() {
                     type="number"
                     defaultValue={p.unit_cost}
                     onBlur={(e) => savePart({ id: p.id, unit_cost: Number(e.target.value) || 0 })}
-                    className="w-24 rounded border border-transparent hover:border-gray-200 focus:border-indigo-400 px-1.5 py-1 text-sm"
+                    className="field-inline w-24"
                   />
                 </td>
                 <td className="py-2 pr-3">
                   <input
                     defaultValue={p.unit}
                     onBlur={(e) => savePart({ id: p.id, unit: e.target.value || 'ea' })}
-                    className="w-16 rounded border border-transparent hover:border-gray-200 focus:border-indigo-400 px-1.5 py-1 text-sm"
+                    className="field-inline w-16"
                   />
                 </td>
                 <td className="py-2 pr-3">
@@ -156,7 +145,7 @@ export function PriceListsPage() {
                   />
                 </td>
                 <td className="py-2 text-right">
-                  <button onClick={() => deletePart(p.id)} className="text-gray-400 hover:text-red-600">
+                  <button onClick={() => deletePart(p.id)} className="btn-icon hover:text-danger">
                     <Trash2 size={14} />
                   </button>
                 </td>
@@ -164,38 +153,19 @@ export function PriceListsPage() {
             ))}
             {!parts.length && (
               <tr>
-                <td colSpan={6} className="text-center text-gray-400 py-4">No parts yet.</td>
+                <td colSpan={6} className="text-center text-ink-faint py-4">No parts yet.</td>
               </tr>
             )}
           </tbody>
         </table>
         <div className="flex items-end gap-2 pt-2 flex-wrap">
-          <input
-            placeholder="Part name"
-            value={newPartName}
-            onChange={(e) => setNewPartName(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-48"
-          />
-          <input
-            placeholder="SKU (optional)"
-            value={newPartSku}
-            onChange={(e) => setNewPartSku(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-32"
-          />
-          <input
-            placeholder="Unit cost"
-            type="number"
-            value={newPartCost}
-            onChange={(e) => setNewPartCost(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-28"
-          />
-          <input
-            placeholder="Unit"
-            value={newPartUnit}
-            onChange={(e) => setNewPartUnit(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-20"
-          />
-          <button
+          <input placeholder="Part name" value={newPartName} onChange={(e) => setNewPartName(e.target.value)} className="field w-48" />
+          <input placeholder="SKU (optional)" value={newPartSku} onChange={(e) => setNewPartSku(e.target.value)} className="field w-32" />
+          <input placeholder="Unit cost" type="number" value={newPartCost} onChange={(e) => setNewPartCost(e.target.value)} className="field w-28" />
+          <input placeholder="Unit" value={newPartUnit} onChange={(e) => setNewPartUnit(e.target.value)} className="field w-20" />
+          <Button
+            variant="secondary"
+            icon={<Plus size={14} />}
             onClick={async () => {
               if (!newPartName.trim()) return
               await savePart({
@@ -209,10 +179,9 @@ export function PriceListsPage() {
               setNewPartCost('')
               setNewPartUnit('ea')
             }}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50"
           >
-            <Plus size={14} /> Add Part
-          </button>
+            Add Part
+          </Button>
         </div>
       </div>
     </div>

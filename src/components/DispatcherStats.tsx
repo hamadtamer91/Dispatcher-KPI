@@ -80,8 +80,8 @@ export function DispatcherStats({
         />
       </div>
 
-      <div>
-        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Operational KPIs</h3>
+      <div className="pt-2 border-t border-line">
+        <h3 className="text-base font-bold text-ink mt-4 mb-3">Operational KPIs</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <StatTile
             label="Missed ETA"

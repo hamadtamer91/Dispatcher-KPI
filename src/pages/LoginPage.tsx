@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { Button } from '../components/ui'
 
 export function LoginPage({ signIn, error }: { signIn: (email: string, password: string) => Promise<boolean>; error: string }) {
   const [email, setEmail] = useState('')
@@ -14,43 +15,42 @@ export function LoginPage({ signIn, error }: { signIn: (email: string, password:
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <p className="text-xs font-semibold tracking-widest text-gray-400 uppercase">New Global Vista Solutions</p>
-          <h1 className="text-xl font-bold text-gray-900 mt-1">Dispatcher KPI Platform</h1>
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-11 h-11 rounded-xl bg-brand-600 text-white font-extrabold text-lg flex items-center justify-center mb-3">
+            N
+          </div>
+          <h1 className="text-lg font-extrabold text-ink">NGVS Dispatch Console</h1>
+          <p className="text-sm text-ink-faint mt-0.5">New Global Vista Solutions</p>
         </div>
-        <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
-          <p className="text-sm font-semibold text-gray-700">Sign in to your dashboard</p>
+        <form onSubmit={handleSubmit} className="panel p-6 space-y-4">
+          <p className="text-sm font-bold text-ink">Sign in</p>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Email</label>
+            <label className="field-label">Email</label>
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="field"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Password</label>
+            <label className="field-label">Password</label>
             <input
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="field"
             />
           </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg py-2.5 transition-colors disabled:opacity-60"
-          >
-            {submitting ? 'Signing in...' : 'Sign In'}
-          </button>
-          <p className="text-xs text-gray-400 text-center pt-2">
+          {error && <p className="text-sm text-danger">{error}</p>}
+          <Button type="submit" variant="primary" disabled={submitting} className="w-full">
+            {submitting ? 'Signing in...' : 'Sign in'}
+          </Button>
+          <p className="text-xs text-ink-faint text-center pt-2">
             Real accounts only — a Super Admin creates your login from Manage Users.
           </p>
         </form>
