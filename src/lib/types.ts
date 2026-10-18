@@ -170,20 +170,29 @@ export interface DispatchOrderSummary {
   status: string
   auto_dispatch: boolean
   updated_at: string
+  // Free-text note the dispatcher leaves for Raley -- it sees this on every
+  // call about this job until the note is cleared.
+  office_note: string | null
   assigned_technician_id: string | null
   assigned_technician: { name: string; company: string | null; phone: string | null } | null
   technicians: DispatchTechnicianSummary[]
 }
 
+// Outbound calls -- Raley calling a technician. See DispatchInboundCall for
+// the other direction (someone calling Raley's number back).
 export interface DispatchCallEventSummary {
   id: string
   order_title: string | null
   technician_name: string | null
+  call_sid: string | null
   provider: string | null
   event_type: string | null
   ended_reason: string | null
   duration_seconds: number | null
+  cost: number | null
   summary: string | null
+  transcript: string | null
+  recording_url: string | null
   created_at: string
 }
 
@@ -191,14 +200,68 @@ export interface DispatchAlertSummary {
   id: string
   level: string
   message: string
+  source: string | null
+  context: string | null
   order_title: string | null
+  technician_name: string | null
   created_at: string
+}
+
+// Inbound calls -- someone calling Raley's own number back (a callback, a
+// question about a job, etc). The "incoming" half of call tracking.
+export interface DispatchInboundCall {
+  id: string
+  call_id: string | null
+  phone: string | null
+  caller_name: string | null
+  technician_name: string | null
+  order_title: string | null
+  reason: string | null
+  message: string | null
+  summary: string | null
+  transcript: string | null
+  recording_url: string | null
+  callback_requested: boolean
+  handled: boolean
+  created_at: string
+}
+
+// A fee-approval request Raley raised (e.g. an assessment fee above the
+// usual ceiling) that's waiting on, or has already received, a decision.
+export interface DispatchApprovalSummary {
+  id: string
+  order_title: string | null
+  kind: string | null
+  requested_amount: number | null
+  decided_amount: number | null
+  status: string
+  decision_note: string | null
+  created_at: string
+}
+
+export interface DispatchLiveLine {
+  role: string | null
+  text: string
+  created_at: string
+}
+
+// A call that's in progress right now, with its transcript so far -- no
+// technician/order link is available until the call ends and it becomes a
+// normal DispatchCallEventSummary row.
+export interface DispatchActiveCall {
+  call_sid: string
+  started_at: string
+  updated_at: string
+  lines: DispatchLiveLine[]
 }
 
 export interface DispatchActivity {
   orders: DispatchOrderSummary[]
   events: DispatchCallEventSummary[]
   alerts: DispatchAlertSummary[]
+  inbox: DispatchInboundCall[]
+  approvals: DispatchApprovalSummary[]
+  live_calls: DispatchActiveCall[]
   fetched_at: string
 }
 
@@ -229,6 +292,7 @@ export interface DispatchOrderPatch {
   repair_ceiling?: number
   assessment_target?: number | null
   ground_rules?: string | null
+  office_note?: string | null
 }
 
 // Manually add a technician as a candidate on an existing order -- the same

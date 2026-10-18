@@ -1,5 +1,7 @@
-import { useState } from 'react'
-import { AlertTriangle, Phone, Plus, RefreshCw, Settings2 } from 'lucide-react'
+import { Fragment, useState } from 'react'
+import {
+  AlertTriangle, Banknote, ChevronDown, ChevronUp, Phone, PhoneIncoming, Plus, Radio, RefreshCw, Settings2,
+} from 'lucide-react'
 import { useDispatchActivity } from '../hooks/useDispatchActivity'
 import { useRaleyActions } from '../hooks/useRaleyActions'
 import { RaleyOrderModal } from '../components/RaleyOrderModal'
@@ -26,13 +28,24 @@ function formatWhen(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+function formatCurrency(n: number | null): string {
+  if (n == null) return '—'
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+}
+
 export function DispatchAgentPage() {
   const { data, loading, error, refetch } = useDispatchActivity()
-  const { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, addTechnician, busy } = useRaleyActions()
+  const {
+    createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, addTechnician,
+    setInboxHandled, busy,
+  } = useRaleyActions()
   const [showNewOrder, setShowNewOrder] = useState(false)
   const [manageOrderId, setManageOrderId] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
   const [callingId, setCallingId] = useState<string | null>(null)
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null)
+  const [expandedInboxId, setExpandedInboxId] = useState<string | null>(null)
+  const [inboxBusyId, setInboxBusyId] = useState<string | null>(null)
 
   const manageOrder = manageOrderId ? data?.orders.find((o) => o.id === manageOrderId) ?? null : null
 
@@ -78,6 +91,19 @@ export function DispatchAgentPage() {
   const handleAddTechnician: React.ComponentProps<typeof RaleyManageOrderModal>['onAddTechnician'] = async (orderId, technician) => {
     await addTechnician(orderId, technician)
     await refetch()
+  }
+
+  const handleToggleHandled = async (inboxId: string, handled: boolean) => {
+    setActionError('')
+    setInboxBusyId(inboxId)
+    try {
+      await setInboxHandled(inboxId, handled)
+      await refetch()
+    } catch (err) {
+      setActionError((err as Error).message)
+    } finally {
+      setInboxBusyId(null)
+    }
   }
 
   return (
@@ -140,9 +166,30 @@ export function DispatchAgentPage() {
                   <li key={a.id} className="text-sm text-warn">
                     <span className="font-semibold capitalize">{a.level}</span> — {a.message}
                     {a.order_title && <span className="opacity-70"> ({a.order_title})</span>}
+                    {a.technician_name && <span className="opacity-70"> · {a.technician_name}</span>}
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {data.live_calls.length > 0 && (
+            <div className="bg-brand-50 border border-brand-200 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-bold text-brand-700 flex items-center gap-1.5">
+                <Radio size={14} className="animate-pulse" /> {data.live_calls.length} call{data.live_calls.length === 1 ? '' : 's'} live right now
+              </p>
+              {data.live_calls.map((c) => (
+                <div key={c.call_sid} className="bg-white rounded-lg border border-line p-3 space-y-1.5 max-h-48 overflow-y-auto">
+                  <p className="text-xs font-semibold text-ink-faint">On a call since {formatWhen(c.started_at)}</p>
+                  {c.lines.map((l, i) => (
+                    <p key={i} className="text-sm">
+                      <span className="font-semibold text-ink-soft capitalize">{l.role ?? 'Unknown'}:</span>{' '}
+                      <span className="text-ink">{l.text}</span>
+                    </p>
+                  ))}
+                  {!c.lines.length && <p className="text-sm text-ink-faint">Connecting…</p>}
+                </div>
+              ))}
             </div>
           )}
 
@@ -197,7 +244,80 @@ export function DispatchAgentPage() {
           </div>
 
           <div className="panel overflow-x-auto">
-            <h3 className="px-4 pt-4 text-sm font-bold text-ink flex items-center gap-1.5"><Phone size={14} /> Recent Calls</h3>
+            <h3 className="px-4 pt-4 text-sm font-bold text-ink flex items-center gap-1.5"><PhoneIncoming size={14} /> Incoming Calls</h3>
+            <table className="min-w-full text-sm mt-2">
+              <thead>
+                <tr className="table-head-row">
+                  <th className="px-4 py-3">When</th>
+                  <th className="px-4 py-3">Caller</th>
+                  <th className="px-4 py-3">Order</th>
+                  <th className="px-4 py-3">Reason</th>
+                  <th className="px-4 py-3">Summary</th>
+                  <th className="px-4 py-3">Callback?</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.inbox.map((i) => (
+                  <Fragment key={i.id}>
+                    <tr className="table-row">
+                      <td className="px-4 py-2.5 text-ink-faint whitespace-nowrap">{formatWhen(i.created_at)}</td>
+                      <td className="px-4 py-2.5 text-ink">
+                        {i.caller_name ?? i.technician_name ?? 'Unknown caller'}
+                        {i.phone && <span className="block text-xs text-ink-faint">{i.phone}</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-ink-soft">{i.order_title ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-ink-soft">{i.reason ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-ink-soft max-w-xs truncate" title={i.summary ?? i.message ?? ''}>
+                        {i.summary ?? i.message ?? '—'}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {i.callback_requested ? <Badge variant="warn">Requested</Badge> : <span className="text-ink-faint">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Badge variant={i.handled ? 'good' : 'neutral'} dot>{i.handled ? 'Handled' : 'Open'}</Badge>
+                      </td>
+                      <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-2">
+                          {(i.transcript || i.recording_url) && (
+                            <button
+                              onClick={() => setExpandedInboxId(expandedInboxId === i.id ? null : i.id)}
+                              className="text-ink-faint hover:text-ink-soft"
+                              title="Show transcript / recording"
+                            >
+                              {expandedInboxId === i.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleToggleHandled(i.id, !i.handled)}
+                            disabled={inboxBusyId === i.id}
+                            className="text-xs font-semibold text-brand-700 hover:text-brand-800 disabled:opacity-50"
+                          >
+                            {inboxBusyId === i.id ? '...' : i.handled ? 'Reopen' : 'Mark handled'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {expandedInboxId === i.id && (
+                      <tr className="bg-canvas">
+                        <td colSpan={8} className="px-4 py-3 space-y-2">
+                          {i.transcript && <p className="text-xs text-ink-soft whitespace-pre-wrap">{i.transcript}</p>}
+                          {i.recording_url && <audio controls src={i.recording_url} className="w-full max-w-md" />}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+                {!data.inbox.length && (
+                  <tr><td colSpan={8} className="text-center text-ink-faint py-8">No incoming calls logged yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="panel overflow-x-auto">
+            <h3 className="px-4 pt-4 text-sm font-bold text-ink flex items-center gap-1.5"><Phone size={14} /> Recent Calls (Outgoing)</h3>
             <table className="min-w-full text-sm mt-2">
               <thead>
                 <tr className="table-head-row">
@@ -207,25 +327,68 @@ export function DispatchAgentPage() {
                   <th className="px-4 py-3">Outcome</th>
                   <th className="px-4 py-3">Duration</th>
                   <th className="px-4 py-3">Summary</th>
+                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {data.events.map((e) => (
-                  <tr key={e.id} className="table-row">
-                    <td className="px-4 py-2.5 text-ink-faint whitespace-nowrap">{formatWhen(e.created_at)}</td>
-                    <td className="px-4 py-2.5 text-ink">{e.order_title ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-ink-soft">{e.technician_name ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-ink-soft">{e.ended_reason ?? e.event_type ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-ink-soft tabular-nums">{formatDuration(e.duration_seconds)}</td>
-                    <td className="px-4 py-2.5 text-ink-soft max-w-xs truncate" title={e.summary ?? ''}>{e.summary ?? '—'}</td>
-                  </tr>
+                  <Fragment key={e.id}>
+                    <tr className="table-row">
+                      <td className="px-4 py-2.5 text-ink-faint whitespace-nowrap">{formatWhen(e.created_at)}</td>
+                      <td className="px-4 py-2.5 text-ink">{e.order_title ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-ink-soft">{e.technician_name ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-ink-soft">{e.ended_reason ?? e.event_type ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-ink-soft tabular-nums">{formatDuration(e.duration_seconds)}</td>
+                      <td className="px-4 py-2.5 text-ink-soft max-w-xs truncate" title={e.summary ?? ''}>{e.summary ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        {(e.transcript || e.recording_url || e.cost != null) && (
+                          <button
+                            onClick={() => setExpandedEventId(expandedEventId === e.id ? null : e.id)}
+                            className="text-ink-faint hover:text-ink-soft"
+                            title="Show transcript / recording"
+                          >
+                            {expandedEventId === e.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandedEventId === e.id && (
+                      <tr className="bg-canvas">
+                        <td colSpan={7} className="px-4 py-3 space-y-2">
+                          {e.cost != null && <p className="text-xs text-ink-faint">Call cost: {formatCurrency(e.cost)}</p>}
+                          {e.transcript && <p className="text-xs text-ink-soft whitespace-pre-wrap">{e.transcript}</p>}
+                          {e.recording_url && <audio controls src={e.recording_url} className="w-full max-w-md" />}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
                 {!data.events.length && (
-                  <tr><td colSpan={6} className="text-center text-ink-faint py-8">No calls logged yet.</td></tr>
+                  <tr><td colSpan={7} className="text-center text-ink-faint py-8">No calls logged yet.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {data.approvals.length > 0 && (
+            <div className="panel p-4 space-y-2">
+              <h3 className="text-sm font-bold text-ink flex items-center gap-1.5"><Banknote size={14} /> Approval Requests</h3>
+              <ul className="space-y-1.5">
+                {data.approvals.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between text-sm py-1.5 border-b border-line-soft last:border-b-0">
+                    <span className="text-ink-soft">
+                      <span className="font-semibold text-ink capitalize">{a.kind ?? 'Request'}</span>
+                      {a.order_title && <span className="text-ink-faint"> · {a.order_title}</span>}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="tabular-nums text-ink">{formatCurrency(a.requested_amount)}</span>
+                      <Badge variant={a.status === 'pending' ? 'warn' : a.status === 'approved' ? 'good' : 'neutral'}>{a.status}</Badge>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </>
       )}
     </div>

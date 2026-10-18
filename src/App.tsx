@@ -21,7 +21,7 @@ import { PriceListsPage } from './pages/PriceListsPage'
 import { DispatchAgentPage } from './pages/DispatchAgentPage'
 
 type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'proposals' | 'price_lists' | 'dispatch_agent'
-type DispatcherTab = 'jobs' | 'proposals' | 'price_lists'
+type DispatcherTab = 'jobs' | 'proposals' | 'price_lists' | 'dispatch_agent'
 
 interface NavEntry<T extends string> {
   key: T
@@ -115,6 +115,10 @@ export default function App() {
         { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
       ],
     },
+    {
+      label: 'Automation',
+      items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} /> }],
+    },
   ]
 
   const sidebarBody = isDispatcherOnly ? (
@@ -139,6 +143,7 @@ export default function App() {
               <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
             )}
             {dispatcherTab === 'price_lists' && <PriceListsPage />}
+            {dispatcherTab === 'dispatch_agent' && <DispatchAgentPage />}
           </>
         }
       />

@@ -131,5 +131,21 @@ export function useRaleyActions() {
     }
   }, [])
 
-  return { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, addTechnician, busy }
+  // Marks (or unmarks) an incoming call as handled -- the dispatcher's own
+  // tracking of which callbacks/questions from the inbox still need action.
+  const setInboxHandled = useCallback(async (inboxId: string, handled: boolean) => {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('raley-actions', {
+        body: { action: 'set_inbox_handled', payload: { inboxId, handled } },
+      })
+      if (error) throw new Error(await extractError(error))
+      if (data?.error) throw new Error(data.error)
+      return data
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  return { createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, addTechnician, setInboxHandled, busy }
 }

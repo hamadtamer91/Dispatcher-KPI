@@ -20,6 +20,13 @@ function errMsg(err: unknown): string {
 const ORDERS_LIMIT = 25
 const EVENTS_LIMIT = 30
 const ALERTS_LIMIT = 20
+const INBOX_LIMIT = 40
+const APPROVALS_LIMIT = 20
+// Live transcript lines accumulate on ai_dispatch_live_lines while a call is
+// in progress and have no row yet in ai_dispatch_call_events (that's written
+// only once the call ends) -- so "is a call active" is approximated as "has
+// a line in the last few minutes with no matching call_events.call_sid".
+const LIVE_LINES_WINDOW_MINUTES = 10
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -59,11 +66,12 @@ Deno.serve(async (req) => {
     }
 
     const dispatch = createClient(DISPATCH_URL, DISPATCH_SERVICE_ROLE_KEY)
+    const liveLinesSince = new Date(Date.now() - LIVE_LINES_WINDOW_MINUTES * 60 * 1000).toISOString()
 
-    const [ordersRes, techsRes, eventsRes, alertsRes] = await Promise.all([
+    const [ordersRes, techsRes, eventsRes, alertsRes, inboxRes, approvalsRes, liveLinesRes] = await Promise.all([
       dispatch
         .from('ai_dispatch_orders')
-        .select('id, title, trade, location, description, urgency, repair_ceiling, assessment_target, ground_rules, status, auto_dispatch, updated_at, assigned_technician_id')
+        .select('id, title, trade, location, description, urgency, repair_ceiling, assessment_target, ground_rules, status, auto_dispatch, updated_at, assigned_technician_id, office_note')
         .order('updated_at', { ascending: false })
         .limit(ORDERS_LIMIT),
       dispatch
@@ -71,18 +79,38 @@ Deno.serve(async (req) => {
         .select('id, order_id, name, company, phone, status'),
       dispatch
         .from('ai_dispatch_call_events')
-        .select('id, order_id, technician_id, provider, event_type, ended_reason, duration_seconds, summary, created_at')
+        .select('id, order_id, technician_id, call_sid, provider, event_type, ended_reason, duration_seconds, cost, summary, transcript, recording_url, created_at')
         .order('created_at', { ascending: false })
         .limit(EVENTS_LIMIT),
       dispatch
         .from('ai_dispatch_alerts')
-        .select('id, level, message, order_id, created_at')
+        .select('id, level, message, source, context, order_id, technician_id, created_at')
         .eq('resolved', false)
         .order('created_at', { ascending: false })
         .limit(ALERTS_LIMIT),
+      // Inbound/reception calls -- someone calling Raley's number back.
+      // Not currently surfaced anywhere else in dispatcher-kpi.
+      dispatch
+        .from('ai_dispatch_inbox')
+        .select('id, call_id, phone, caller_name, technician_id, order_id, reason, message, summary, transcript, recording_url, callback_requested, handled, created_at')
+        .order('created_at', { ascending: false })
+        .limit(INBOX_LIMIT),
+      dispatch
+        .from('ai_dispatch_approvals')
+        .select('id, order_id, kind, requested_amount, decided_amount, status, decision_note, created_at')
+        .order('created_at', { ascending: false })
+        .limit(APPROVALS_LIMIT),
+      dispatch
+        .from('ai_dispatch_live_lines')
+        .select('call_sid, role, text, created_at')
+        .gte('created_at', liveLinesSince)
+        .order('created_at', { ascending: true }),
     ])
 
-    for (const [step, res] of [['orders', ordersRes], ['technicians', techsRes], ['events', eventsRes], ['alerts', alertsRes]] as const) {
+    for (const [step, res] of [
+      ['orders', ordersRes], ['technicians', techsRes], ['events', eventsRes], ['alerts', alertsRes],
+      ['inbox', inboxRes], ['approvals', approvalsRes], ['live_lines', liveLinesRes],
+    ] as const) {
       if (res.error) {
         console.error(`${step} query failed`, res.error)
         return jsonResponse({ step, error: res.error }, 500)
@@ -93,6 +121,9 @@ Deno.serve(async (req) => {
     const techs = techsRes.data ?? []
     const events = eventsRes.data ?? []
     const alerts = alertsRes.data ?? []
+    const inbox = inboxRes.data ?? []
+    const approvals = approvalsRes.data ?? []
+    const liveLines = liveLinesRes.data ?? []
 
     const techById = new Map(techs.map((t) => [t.id, t]))
     const orderTitleById = new Map(orders.map((o) => [o.id, o.title]))
@@ -100,7 +131,7 @@ Deno.serve(async (req) => {
     // window; backfill those titles with a small extra lookup rather than
     // showing "Unknown order" for anything slightly older.
     const missingOrderIds = [...new Set(
-      [...events.map((e) => e.order_id), ...alerts.map((a) => a.order_id)]
+      [...events.map((e) => e.order_id), ...alerts.map((a) => a.order_id), ...inbox.map((i) => i.order_id), ...approvals.map((a) => a.order_id)]
         .filter((id): id is string => !!id && !orderTitleById.has(id))
     )]
     if (missingOrderIds.length > 0) {
@@ -109,6 +140,19 @@ Deno.serve(async (req) => {
         .select('id, title')
         .in('id', missingOrderIds)
       for (const o of extraOrders ?? []) orderTitleById.set(o.id, o.title)
+    }
+
+    // Group live transcript lines by call -- a call counts as "active" only
+    // if it has no matching call_events row yet (that row is written once
+    // the call ends), otherwise it's just the tail of a call already shown
+    // in Recent Calls.
+    const eventCallSids = new Set(events.map((e) => e.call_sid).filter((s): s is string => !!s))
+    const liveByCallSid = new Map<string, typeof liveLines>()
+    for (const line of liveLines) {
+      if (!line.call_sid || eventCallSids.has(line.call_sid)) continue
+      const existing = liveByCallSid.get(line.call_sid)
+      if (existing) existing.push(line)
+      else liveByCallSid.set(line.call_sid, [line])
     }
 
     const responseBody = {
@@ -125,6 +169,7 @@ Deno.serve(async (req) => {
         status: o.status,
         auto_dispatch: o.auto_dispatch,
         updated_at: o.updated_at,
+        office_note: o.office_note ?? null,
         assigned_technician_id: o.assigned_technician_id,
         assigned_technician: o.assigned_technician_id && techById.has(o.assigned_technician_id)
           ? (() => {
@@ -143,19 +188,62 @@ Deno.serve(async (req) => {
         id: e.id,
         order_title: e.order_id ? orderTitleById.get(e.order_id) ?? null : null,
         technician_name: e.technician_id ? techById.get(e.technician_id)?.name ?? null : null,
+        call_sid: e.call_sid ?? null,
         provider: e.provider,
         event_type: e.event_type,
         ended_reason: e.ended_reason,
         duration_seconds: e.duration_seconds,
+        cost: e.cost ?? null,
         summary: e.summary,
+        transcript: e.transcript ?? null,
+        recording_url: e.recording_url ?? null,
         created_at: e.created_at,
       })),
       alerts: alerts.map((a) => ({
         id: a.id,
         level: a.level,
         message: a.message,
+        source: a.source ?? null,
+        context: a.context ?? null,
         order_title: a.order_id ? orderTitleById.get(a.order_id) ?? null : null,
+        technician_name: a.technician_id ? techById.get(a.technician_id)?.name ?? null : null,
         created_at: a.created_at,
+      })),
+      // Inbound calls -- the "incoming" half of call tracking. Outbound
+      // dispatch calls are `events` above; these are calls someone placed
+      // TO Raley's own number (a callback, a question, etc).
+      inbox: inbox.map((i) => ({
+        id: i.id,
+        call_id: i.call_id ?? null,
+        phone: i.phone ?? null,
+        caller_name: i.caller_name ?? null,
+        technician_name: i.technician_id ? techById.get(i.technician_id)?.name ?? null : null,
+        order_title: i.order_id ? orderTitleById.get(i.order_id) ?? null : null,
+        reason: i.reason ?? null,
+        message: i.message ?? null,
+        summary: i.summary ?? null,
+        transcript: i.transcript ?? null,
+        recording_url: i.recording_url ?? null,
+        callback_requested: !!i.callback_requested,
+        handled: !!i.handled,
+        created_at: i.created_at,
+      })),
+      approvals: approvals.map((a) => ({
+        id: a.id,
+        order_title: a.order_id ? orderTitleById.get(a.order_id) ?? null : null,
+        kind: a.kind ?? null,
+        requested_amount: a.requested_amount ?? null,
+        decided_amount: a.decided_amount ?? null,
+        status: a.status,
+        decision_note: a.decision_note ?? null,
+        created_at: a.created_at,
+      })),
+      // Calls in progress right now, with their transcript so far.
+      live_calls: [...liveByCallSid.entries()].map(([call_sid, lines]) => ({
+        call_sid,
+        started_at: lines[0].created_at,
+        updated_at: lines[lines.length - 1].created_at,
+        lines: lines.map((l) => ({ role: l.role, text: l.text, created_at: l.created_at })),
       })),
       fetched_at: new Date().toISOString(),
     }

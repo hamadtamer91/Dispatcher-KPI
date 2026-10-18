@@ -70,16 +70,21 @@ function jsonResponse(body: unknown, status = 200) {
 
 type ApiAction = 'create_order' | 'call_technician'
 type DbAction = 'update_order' | 'reassign_technician' | 'set_auto_dispatch' | 'cancel_order' | 'add_technician'
-type Action = ApiAction | DbAction
+// Writes against ai_dispatch_inbox (the incoming-call log) rather than
+// ai_dispatch_orders -- keyed by inboxId, not orderId, so it's handled in
+// its own branch below before the orderId-required DB_ACTIONS branch.
+type InboxAction = 'set_inbox_handled'
+type Action = ApiAction | DbAction | InboxAction
 
 const API_ACTIONS = new Set<Action>(['create_order', 'call_technician'])
 const DB_ACTIONS = new Set<Action>(['update_order', 'reassign_technician', 'set_auto_dispatch', 'cancel_order', 'add_technician'])
+const INBOX_ACTIONS = new Set<Action>(['set_inbox_handled'])
 
 // Whitelisted editable columns -- never spread an arbitrary patch object
 // straight into a Postgres update.
 const EDITABLE_ORDER_FIELDS = [
   'title', 'trade', 'location', 'description', 'urgency',
-  'repair_ceiling', 'assessment_target', 'ground_rules',
+  'repair_ceiling', 'assessment_target', 'ground_rules', 'office_note',
 ] as const
 
 function pickEditableFields(patch: Record<string, unknown>): Record<string, unknown> {
@@ -110,11 +115,45 @@ Deno.serve(async (req) => {
     const action = body?.action as Action | undefined
     const payload = body?.payload ?? {}
 
-    if (!action || (!API_ACTIONS.has(action) && !DB_ACTIONS.has(action))) {
+    if (!action || (!API_ACTIONS.has(action) && !DB_ACTIONS.has(action) && !INBOX_ACTIONS.has(action))) {
       return jsonResponse(
-        { error: 'action must be one of "create_order", "call_technician", "update_order", "reassign_technician", "set_auto_dispatch", "cancel_order", "add_technician"' },
+        { error: 'action must be one of "create_order", "call_technician", "update_order", "reassign_technician", "set_auto_dispatch", "cancel_order", "add_technician", "set_inbox_handled"' },
         400,
       )
+    }
+
+    // ---- Inbox actions: write straight to ai_dispatch_inbox (the incoming
+    // call log), keyed by inboxId rather than orderId. ----
+    if (INBOX_ACTIONS.has(action)) {
+      if (!payload.inboxId) {
+        return jsonResponse({ error: 'payload.inboxId is required' }, 400)
+      }
+      if (typeof payload.handled !== 'boolean') {
+        return jsonResponse({ error: 'payload.handled must be a boolean' }, 400)
+      }
+      const db = dispatchDb()
+      if (!db) {
+        console.error('env_check failed', { has_url: false, has_key: false })
+        return jsonResponse(
+          { step: 'env_check', error: 'Missing DISPATCH_AGENT_SUPABASE_URL / DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY' },
+          500,
+        )
+      }
+      const { data, error } = await db
+        .from('ai_dispatch_inbox')
+        .update({ handled: payload.handled })
+        .eq('id', payload.inboxId)
+        .select('id, handled')
+        .maybeSingle()
+
+      if (error) {
+        console.error('set_inbox_handled db update failed', error)
+        return jsonResponse({ step: action, error: error.message }, 500)
+      }
+      if (!data) {
+        return jsonResponse({ step: action, error: 'No inbox item found with that id' }, 404)
+      }
+      return jsonResponse({ ok: true, result: data })
     }
 
     // ---- Direct-DB actions: write straight to ai_dispatch_orders. ----

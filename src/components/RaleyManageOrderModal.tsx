@@ -30,6 +30,7 @@ export function RaleyManageOrderModal({
     repair_ceiling: order.repair_ceiling ?? 0,
     assessment_target: order.assessment_target,
     ground_rules: order.ground_rules ?? '',
+    office_note: order.office_note ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -270,6 +271,9 @@ export function RaleyManageOrderModal({
             </Field>
             <Field label="Ground Rules">
               <textarea value={form.ground_rules ?? ''} onChange={(e) => update('ground_rules', e.target.value)} className="field" rows={2} />
+            </Field>
+            <Field label="Office Note (Raley sees this on every call until cleared)">
+              <textarea value={form.office_note ?? ''} onChange={(e) => update('office_note', e.target.value)} className="field" rows={2} placeholder="e.g. Tenant prefers afternoon visits -- confirm access code with them before dispatching." />
             </Field>
 
             <div className="flex justify-end gap-2 pt-1">
