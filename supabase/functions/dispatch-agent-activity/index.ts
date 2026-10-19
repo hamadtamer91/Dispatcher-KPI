@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
         .select('id, order_id, name, company, phone, status'),
       dispatch
         .from('ai_dispatch_call_events')
-        .select('id, order_id, technician_id, call_sid, provider, event_type, ended_reason, duration_seconds, cost, summary, transcript, recording_url, created_at')
+        .select('id, order_id, technician_id, call_sid, provider, event_type, ended_reason, duration_seconds, cost, summary, transcript, recording_url, structured_data, created_at')
         .order('created_at', { ascending: false })
         .limit(EVENTS_LIMIT),
       dispatch
@@ -140,6 +140,32 @@ Deno.serve(async (req) => {
 
     const techById = new Map(techs.map((t) => [t.id, t]))
     const orderTitleById = new Map(orders.map((o) => [o.id, o.title]))
+
+    // Call direction -- Raley's own dashboard (app-3.js, renderCallItem)
+    // reads this straight off structured_data: outbound calls we place get
+    // it as structured_data.direction on the "call-started" row written the
+    // moment the call is placed; the webhook writes it back as
+    // structured_data._direction (underscore-prefixed to avoid colliding
+    // with an unrelated "direction" field already present in Vapi's own
+    // payload) on the finished-call report row. inbound-call-report rows
+    // imply inbound even with no explicit field. Mirrored here exactly so
+    // dispatcher-kpi's history matches the original system's labeling.
+    function eventDirection(e: { event_type: string | null; structured_data: unknown }): 'inbound' | 'outbound' | null {
+      const sd = (e.structured_data ?? {}) as Record<string, unknown>
+      const raw = (sd._direction ?? sd.direction) as string | undefined
+      if (raw === 'inbound' || raw === 'outbound') return raw
+      if (e.event_type === 'inbound-call-report') return 'inbound'
+      return null
+    }
+    // A live call (still in progress, no call_events row yet) has no
+    // structured_data to read direction from -- but an outbound call gets a
+    // "call-started" row written immediately when it's placed, while an
+    // inbound call doesn't get any row until it's done. So "has a
+    // call-started row for this call_sid" is a reliable stand-in for
+    // "we placed it" until the real report lands.
+    const callStartedSids = new Set(
+      events.filter((e) => e.event_type === 'call-started' && e.call_sid).map((e) => e.call_sid as string),
+    )
 
     // Dispatcher-scoped view: only calls/alerts/inbox/approvals tied to one
     // of this dispatcher's own orders (orders itself is already scoped by
@@ -222,6 +248,7 @@ Deno.serve(async (req) => {
         summary: e.summary,
         transcript: e.transcript ?? null,
         recording_url: e.recording_url ?? null,
+        direction: eventDirection(e),
         created_at: e.created_at,
       })),
       alerts: scopedAlerts.map((a) => ({
@@ -274,6 +301,7 @@ Deno.serve(async (req) => {
             call_sid,
             started_at: lines[0].created_at,
             updated_at: lines[lines.length - 1].created_at,
+            direction: callStartedSids.has(call_sid) ? 'outbound' as const : 'inbound' as const,
             lines: lines.map((l) => ({ role: l.role, text: l.text, created_at: l.created_at })),
           })),
       fetched_at: new Date().toISOString(),

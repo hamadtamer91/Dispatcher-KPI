@@ -6,6 +6,7 @@ import {
   Map as MapIcon, FileText, Tags, Phone, Menu, X,
 } from 'lucide-react'
 import { useAuth } from './hooks/useAuth'
+import { useLiveCallCount } from './hooks/useLiveCallCount'
 import { LoginPage } from './pages/LoginPage'
 import { WorkOrdersPage } from './pages/WorkOrdersPage'
 import { KPIOverviewPage } from './pages/KPIOverviewPage'
@@ -27,6 +28,9 @@ interface NavEntry<T extends string> {
   key: T
   label: string
   icon: React.ReactNode
+  // Small count pill next to the label -- used for "calls live right now"
+  // on the Dispatch Agent item. Omit or 0 shows nothing.
+  badge?: number
 }
 interface NavGroup<T extends string> {
   label: string
@@ -35,6 +39,7 @@ interface NavGroup<T extends string> {
 
 export default function App() {
   const { session, profile, loading, error, signIn, signOut } = useAuth()
+  const liveCallCount = useLiveCallCount(!!session)
   const [tab, setTab] = useState<Tab>('work_orders')
   const [dispatcherTab, setDispatcherTab] = useState<DispatcherTab>('jobs')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -93,7 +98,7 @@ export default function App() {
     },
     {
       label: 'Automation',
-      items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} /> }],
+      items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} />, badge: liveCallCount.total }],
     },
     ...(profile.role === 'super_admin'
       ? [{
@@ -117,7 +122,7 @@ export default function App() {
     },
     {
       label: 'Automation',
-      items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} /> }],
+      items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} />, badge: liveCallCount.total }],
     },
   ]
 
@@ -304,6 +309,15 @@ function SidebarNav<T extends string>({
                   )}
                   <span className="relative z-10 shrink-0">{item.icon}</span>
                   <span className="relative z-10 truncate">{item.label}</span>
+                  {!!item.badge && (
+                    <span
+                      className="relative z-10 ml-auto shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full text-[11px] font-bold text-white"
+                      style={{ backgroundColor: 'var(--color-danger)' }}
+                      title={`${item.badge} call${item.badge === 1 ? '' : 's'} live right now`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
                 </button>
               )
             })}

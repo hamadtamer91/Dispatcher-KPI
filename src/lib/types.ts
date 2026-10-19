@@ -193,6 +193,10 @@ export interface DispatchCallEventSummary {
   summary: string | null
   transcript: string | null
   recording_url: string | null
+  // 'inbound' | 'outbound' | null -- read straight off Vapi's structured
+  // call data, the same way Raley's own dashboard labels its call history
+  // (see dispatch-agent-activity's eventDirection for exactly how).
+  direction: 'inbound' | 'outbound' | null
   created_at: string
 }
 
@@ -252,6 +256,10 @@ export interface DispatchActiveCall {
   call_sid: string
   started_at: string
   updated_at: string
+  // Inferred (no structured call data exists yet for a call still in
+  // progress): 'outbound' if we have a "call-started" row for this call,
+  // 'inbound' otherwise -- see dispatch-agent-activity for the exact logic.
+  direction: 'inbound' | 'outbound'
   lines: DispatchLiveLine[]
 }
 

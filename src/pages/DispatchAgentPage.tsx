@@ -33,6 +33,16 @@ function formatCurrency(n: number | null): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 }
 
+// Matches the original agent system's own call-direction pill (app-3.js,
+// renderCallItem): "← Incoming" / "→ Outgoing", a distinct color per
+// direction so it reads at a glance in a dense table.
+function DirectionPill({ direction }: { direction: 'inbound' | 'outbound' | null }) {
+  if (!direction) return <span className="text-ink-faint">—</span>
+  return direction === 'inbound'
+    ? <Badge variant="brand">← Incoming</Badge>
+    : <Badge variant="neutral">→ Outgoing</Badge>
+}
+
 interface DispatchAgentPageProps {
   // When set (the dispatcher role), scopes the whole tab to just the orders
   // this dispatcher personally created, plus only the calls/alerts/inbox/
@@ -189,10 +199,15 @@ export function DispatchAgentPage({ dispatcherName }: DispatchAgentPageProps = {
             <div className="bg-brand-50 border border-brand-200 rounded-xl p-4 space-y-3">
               <p className="text-sm font-bold text-brand-700 flex items-center gap-1.5">
                 <Radio size={14} className="animate-pulse" /> {data.live_calls.length} call{data.live_calls.length === 1 ? '' : 's'} live right now
+                <span className="font-normal text-brand-700/70">
+                  ({data.live_calls.filter((c) => c.direction === 'inbound').length} incoming, {data.live_calls.filter((c) => c.direction === 'outbound').length} outgoing)
+                </span>
               </p>
               {data.live_calls.map((c) => (
                 <div key={c.call_sid} className="bg-white rounded-lg border border-line p-3 space-y-1.5 max-h-48 overflow-y-auto">
-                  <p className="text-xs font-semibold text-ink-faint">On a call since {formatWhen(c.started_at)}</p>
+                  <p className="text-xs font-semibold text-ink-faint flex items-center gap-1.5">
+                    <DirectionPill direction={c.direction} /> On a call since {formatWhen(c.started_at)}
+                  </p>
                   {c.lines.map((l, i) => (
                     <p key={i} className="text-sm">
                       <span className="font-semibold text-ink-soft capitalize">{l.role ?? 'Unknown'}:</span>{' '}
@@ -333,11 +348,12 @@ export function DispatchAgentPage({ dispatcherName }: DispatchAgentPageProps = {
           </div>
 
           <div className="panel overflow-x-auto">
-            <h3 className="px-4 pt-4 text-sm font-bold text-ink flex items-center gap-1.5"><Phone size={14} /> Recent Calls (Outgoing)</h3>
+            <h3 className="px-4 pt-4 text-sm font-bold text-ink flex items-center gap-1.5"><Phone size={14} /> Recent Calls</h3>
             <table className="min-w-full text-sm mt-2">
               <thead>
                 <tr className="table-head-row">
                   <th className="px-4 py-3">When</th>
+                  <th className="px-4 py-3">Direction</th>
                   <th className="px-4 py-3">Order</th>
                   <th className="px-4 py-3">Technician</th>
                   <th className="px-4 py-3">Outcome</th>
@@ -351,6 +367,7 @@ export function DispatchAgentPage({ dispatcherName }: DispatchAgentPageProps = {
                   <Fragment key={e.id}>
                     <tr className="table-row">
                       <td className="px-4 py-2.5 text-ink-faint whitespace-nowrap">{formatWhen(e.created_at)}</td>
+                      <td className="px-4 py-2.5"><DirectionPill direction={e.direction} /></td>
                       <td className="px-4 py-2.5 text-ink">{e.order_title ?? '—'}</td>
                       <td className="px-4 py-2.5 text-ink-soft">{e.technician_name ?? '—'}</td>
                       <td className="px-4 py-2.5 text-ink-soft">{e.ended_reason ?? e.event_type ?? '—'}</td>
@@ -370,7 +387,7 @@ export function DispatchAgentPage({ dispatcherName }: DispatchAgentPageProps = {
                     </tr>
                     {expandedEventId === e.id && (
                       <tr className="bg-canvas">
-                        <td colSpan={7} className="px-4 py-3 space-y-2">
+                        <td colSpan={8} className="px-4 py-3 space-y-2">
                           {e.cost != null && <p className="text-xs text-ink-faint">Call cost: {formatCurrency(e.cost)}</p>}
                           {e.transcript && <p className="text-xs text-ink-soft whitespace-pre-wrap">{e.transcript}</p>}
                           {e.recording_url && <audio controls src={e.recording_url} className="w-full max-w-md" />}
@@ -380,7 +397,7 @@ export function DispatchAgentPage({ dispatcherName }: DispatchAgentPageProps = {
                   </Fragment>
                 ))}
                 {!data.events.length && (
-                  <tr><td colSpan={7} className="text-center text-ink-faint py-8">No calls logged yet.</td></tr>
+                  <tr><td colSpan={8} className="text-center text-ink-faint py-8">No calls logged yet.</td></tr>
                 )}
               </tbody>
             </table>
