@@ -28,7 +28,7 @@
 //    way updates the record but does not itself notify that technician --
 //    use "Call technician" for that if a confirmation call is wanted.
 //
-//   POST { action: "create_order", payload: {...order fields} }
+//   POST { action: "create_order", payload: {...order fields, createdByDispatcher?} }
 //   POST { action: "call_technician", payload: { orderId, technicianId, purpose? } }
 //   POST { action: "update_order", payload: { orderId, patch: {...order fields} } }
 //   POST { action: "reassign_technician", payload: { orderId, technicianId } }  // technicianId: null clears it
@@ -278,13 +278,17 @@ Deno.serve(async (req) => {
     const cookieHeader = setCookies.map((c) => c.split(';')[0]).join('; ')
 
     // Step 2: forward the actual action to Raley's real, already-tested endpoint.
+    // createdByDispatcher isn't one of Raley's own order columns (it's not in
+    // orders.js's FIELDS whitelist), so strip it before forwarding -- it's
+    // applied afterward, directly, below.
     const target = action === 'create_order' ? '/api/orders' : '/api/calls-start'
+    const { createdByDispatcher, ...forwardPayload } = payload as Record<string, unknown> & { createdByDispatcher?: string }
     let actionRes: Response
     try {
       actionRes = await fetch(`${RALEY_BASE_URL}${target}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(forwardPayload),
       })
     } catch (err) {
       console.error(`raley ${action} request failed`, errMsg(err))
@@ -298,6 +302,46 @@ Deno.serve(async (req) => {
         { step: action, error: actionBody?.error || `Raley returned ${actionRes.status}`, details: actionBody },
         actionRes.status < 500 ? actionRes.status : 500,
       )
+    }
+
+    // Tag who created this order, for the dispatcher-scoped view in
+    // dispatch-agent-activity. Raley's own /api/orders has no column for
+    // this (see the FIELDS whitelist in orders.js), so it's set with a
+    // direct follow-up write using the same service-role credentials the
+    // DB actions above already use. Best-effort: the order itself is
+    // already created and real, so a failure here never fails the request
+    // -- it would just leave that one order untagged for scoping purposes.
+    if (action === 'create_order' && createdByDispatcher) {
+      try {
+        const db = dispatchDb()
+        if (db) {
+          const newId = (actionBody as { id?: string; order?: { id?: string }; data?: { id?: string } } | null)?.id
+            ?? (actionBody as { order?: { id?: string } } | null)?.order?.id
+            ?? (actionBody as { data?: { id?: string } } | null)?.data?.id
+            ?? null
+          if (newId) {
+            await db.from('ai_dispatch_orders').update({ created_by_dispatcher: createdByDispatcher }).eq('id', newId)
+          } else {
+            // Raley's response didn't expose the new row's id in a shape we
+            // recognize -- fall back to the most recent still-untagged order
+            // matching exactly what was just submitted.
+            const { data: recent } = await db
+              .from('ai_dispatch_orders')
+              .select('id, created_at')
+              .eq('title', (forwardPayload as { title?: string }).title ?? '')
+              .eq('location', (forwardPayload as { location?: string }).location ?? '')
+              .is('created_by_dispatcher', null)
+              .order('created_at', { ascending: false })
+              .limit(1)
+            const candidate = recent?.[0]
+            if (candidate && Date.now() - new Date(candidate.created_at).getTime() < 30000) {
+              await db.from('ai_dispatch_orders').update({ created_by_dispatcher: createdByDispatcher }).eq('id', candidate.id)
+            }
+          }
+        }
+      } catch (tagErr) {
+        console.error('create_order: failed to tag created_by_dispatcher (non-fatal)', errMsg(tagErr))
+      }
     }
 
     return jsonResponse({ ok: true, result: actionBody })

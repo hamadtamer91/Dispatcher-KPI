@@ -47,6 +47,16 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // When called with a dispatcherName, scope the whole response to just
+    // that dispatcher's own orders (and only the calls/alerts/inbox/approvals
+    // tied to one of those orders) -- used for the dispatcher role's own
+    // Dispatch Agent tab, so a dispatcher only sees what they personally
+    // added through it. Omitted (admin view) -> no filtering, same as before.
+    const requestBody = await req.json().catch(() => ({}))
+    const dispatcherName = typeof requestBody?.dispatcherName === 'string' && requestBody.dispatcherName.trim()
+      ? requestBody.dispatcherName.trim()
+      : null
+
     const DISPATCH_URL = Deno.env.get('DISPATCH_AGENT_SUPABASE_URL')
     const DISPATCH_SERVICE_ROLE_KEY = Deno.env.get('DISPATCH_AGENT_SUPABASE_SERVICE_ROLE_KEY')
 
@@ -68,12 +78,15 @@ Deno.serve(async (req) => {
     const dispatch = createClient(DISPATCH_URL, DISPATCH_SERVICE_ROLE_KEY)
     const liveLinesSince = new Date(Date.now() - LIVE_LINES_WINDOW_MINUTES * 60 * 1000).toISOString()
 
+    let ordersQuery = dispatch
+      .from('ai_dispatch_orders')
+      .select('id, title, trade, location, description, urgency, repair_ceiling, assessment_target, ground_rules, status, auto_dispatch, updated_at, assigned_technician_id, office_note, created_by_dispatcher')
+      .order('updated_at', { ascending: false })
+      .limit(ORDERS_LIMIT)
+    if (dispatcherName) ordersQuery = ordersQuery.eq('created_by_dispatcher', dispatcherName)
+
     const [ordersRes, techsRes, eventsRes, alertsRes, inboxRes, approvalsRes, liveLinesRes] = await Promise.all([
-      dispatch
-        .from('ai_dispatch_orders')
-        .select('id, title, trade, location, description, urgency, repair_ceiling, assessment_target, ground_rules, status, auto_dispatch, updated_at, assigned_technician_id, office_note')
-        .order('updated_at', { ascending: false })
-        .limit(ORDERS_LIMIT),
+      ordersQuery,
       dispatch
         .from('ai_dispatch_technicians')
         .select('id, order_id, name, company, phone, status'),
@@ -127,11 +140,23 @@ Deno.serve(async (req) => {
 
     const techById = new Map(techs.map((t) => [t.id, t]))
     const orderTitleById = new Map(orders.map((o) => [o.id, o.title]))
+
+    // Dispatcher-scoped view: only calls/alerts/inbox/approvals tied to one
+    // of this dispatcher's own orders (orders itself is already scoped by
+    // the query above). Anything with no order_id can't be attributed to
+    // this dispatcher, so it's excluded rather than guessed at.
+    const scopedOrderIds = dispatcherName ? new Set(orders.map((o) => o.id)) : null
+    const inScope = (orderId: string | null) => !scopedOrderIds || (!!orderId && scopedOrderIds.has(orderId))
+    const scopedEvents = events.filter((e) => inScope(e.order_id))
+    const scopedAlerts = alerts.filter((a) => inScope(a.order_id))
+    const scopedInbox = inbox.filter((i) => inScope(i.order_id))
+    const scopedApprovals = approvals.filter((a) => inScope(a.order_id))
+
     // Call events/alerts can reference orders outside the latest ORDERS_LIMIT
     // window; backfill those titles with a small extra lookup rather than
     // showing "Unknown order" for anything slightly older.
     const missingOrderIds = [...new Set(
-      [...events.map((e) => e.order_id), ...alerts.map((a) => a.order_id), ...inbox.map((i) => i.order_id), ...approvals.map((a) => a.order_id)]
+      [...scopedEvents.map((e) => e.order_id), ...scopedAlerts.map((a) => a.order_id), ...scopedInbox.map((i) => i.order_id), ...scopedApprovals.map((a) => a.order_id)]
         .filter((id): id is string => !!id && !orderTitleById.has(id))
     )]
     if (missingOrderIds.length > 0) {
@@ -184,7 +209,7 @@ Deno.serve(async (req) => {
           .filter((t) => t.order_id === o.id)
           .map((t) => ({ id: t.id, name: t.name, company: t.company ?? null, phone: t.phone ?? null, status: t.status ?? null })),
       })),
-      events: events.map((e) => ({
+      events: scopedEvents.map((e) => ({
         id: e.id,
         order_title: e.order_id ? orderTitleById.get(e.order_id) ?? null : null,
         technician_name: e.technician_id ? techById.get(e.technician_id)?.name ?? null : null,
@@ -199,7 +224,7 @@ Deno.serve(async (req) => {
         recording_url: e.recording_url ?? null,
         created_at: e.created_at,
       })),
-      alerts: alerts.map((a) => ({
+      alerts: scopedAlerts.map((a) => ({
         id: a.id,
         level: a.level,
         message: a.message,
@@ -212,7 +237,7 @@ Deno.serve(async (req) => {
       // Inbound calls -- the "incoming" half of call tracking. Outbound
       // dispatch calls are `events` above; these are calls someone placed
       // TO Raley's own number (a callback, a question, etc).
-      inbox: inbox.map((i) => ({
+      inbox: scopedInbox.map((i) => ({
         id: i.id,
         call_id: i.call_id ?? null,
         phone: i.phone ?? null,
@@ -228,7 +253,7 @@ Deno.serve(async (req) => {
         handled: !!i.handled,
         created_at: i.created_at,
       })),
-      approvals: approvals.map((a) => ({
+      approvals: scopedApprovals.map((a) => ({
         id: a.id,
         order_title: a.order_id ? orderTitleById.get(a.order_id) ?? null : null,
         kind: a.kind ?? null,
@@ -238,13 +263,19 @@ Deno.serve(async (req) => {
         decision_note: a.decision_note ?? null,
         created_at: a.created_at,
       })),
-      // Calls in progress right now, with their transcript so far.
-      live_calls: [...liveByCallSid.entries()].map(([call_sid, lines]) => ({
-        call_sid,
-        started_at: lines[0].created_at,
-        updated_at: lines[lines.length - 1].created_at,
-        lines: lines.map((l) => ({ role: l.role, text: l.text, created_at: l.created_at })),
-      })),
+      // Calls in progress right now, with their transcript so far. Live
+      // lines carry no order_id at all, so there's no way to attribute one
+      // to a specific dispatcher's orders -- omit them entirely in the
+      // scoped view rather than show a call that might belong to someone
+      // else's job.
+      live_calls: dispatcherName
+        ? []
+        : [...liveByCallSid.entries()].map(([call_sid, lines]) => ({
+            call_sid,
+            started_at: lines[0].created_at,
+            updated_at: lines[lines.length - 1].created_at,
+            lines: lines.map((l) => ({ role: l.role, text: l.text, created_at: l.created_at })),
+          })),
       fetched_at: new Date().toISOString(),
     }
 

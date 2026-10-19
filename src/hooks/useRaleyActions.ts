@@ -25,11 +25,14 @@ async function extractError(err: { message: string }): Promise<string> {
 export function useRaleyActions() {
   const [busy, setBusy] = useState(false)
 
-  const createOrder = useCallback(async (payload: NewDispatchOrder) => {
+  // createdByDispatcher tags the order with who made it (profile.dispatcher_name),
+  // so the dispatcher-scoped view in useDispatchActivity can show a dispatcher
+  // only the orders they personally added. Omit it for the admin view.
+  const createOrder = useCallback(async (payload: NewDispatchOrder, createdByDispatcher?: string | null) => {
     setBusy(true)
     try {
       const { data, error } = await supabase.functions.invoke('raley-actions', {
-        body: { action: 'create_order', payload },
+        body: { action: 'create_order', payload: createdByDispatcher ? { ...payload, createdByDispatcher } : payload },
       })
       if (error) throw new Error(await extractError(error))
       if (data?.error) throw new Error(data.error)

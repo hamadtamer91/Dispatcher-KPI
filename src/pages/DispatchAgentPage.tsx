@@ -33,8 +33,16 @@ function formatCurrency(n: number | null): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 }
 
-export function DispatchAgentPage() {
-  const { data, loading, error, refetch } = useDispatchActivity()
+interface DispatchAgentPageProps {
+  // When set (the dispatcher role), scopes the whole tab to just the orders
+  // this dispatcher personally created, plus only the calls/alerts/inbox/
+  // approvals tied to one of those orders. Omitted for the admin view, which
+  // sees everything.
+  dispatcherName?: string | null
+}
+
+export function DispatchAgentPage({ dispatcherName }: DispatchAgentPageProps = {}) {
+  const { data, loading, error, refetch } = useDispatchActivity(dispatcherName)
   const {
     createOrder, callTechnician, updateOrder, reassignTechnician, setAutoDispatch, cancelOrder, addTechnician,
     setInboxHandled, busy,
@@ -50,7 +58,7 @@ export function DispatchAgentPage() {
   const manageOrder = manageOrderId ? data?.orders.find((o) => o.id === manageOrderId) ?? null : null
 
   const handleCreateOrder = async (payload: NewDispatchOrder) => {
-    await createOrder(payload)
+    await createOrder(payload, dispatcherName)
     await refetch()
   }
 
@@ -110,7 +118,11 @@ export function DispatchAgentPage() {
     <div className="space-y-6">
       <PageHeader
         title="Dispatch Agent"
-        description="Raley's technician sourcing — view activity, create orders, and place calls."
+        description={
+          dispatcherName
+            ? "Raley's technician sourcing for your orders — view activity, create orders, and place calls."
+            : "Raley's technician sourcing — view activity, create orders, and place calls."
+        }
         actions={
           <>
             <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={() => refetch()}>
@@ -237,7 +249,11 @@ export function DispatchAgentPage() {
                   </tr>
                 ))}
                 {!data.orders.length && (
-                  <tr><td colSpan={9} className="text-center text-ink-faint py-8">No orders in the dispatch agent yet.</td></tr>
+                  <tr>
+                    <td colSpan={9} className="text-center text-ink-faint py-8">
+                      {dispatcherName ? "You haven't added any orders yet — use \"New Work Order\" above to start." : 'No orders in the dispatch agent yet.'}
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

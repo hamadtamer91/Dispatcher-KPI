@@ -8,7 +8,11 @@ import type { DispatchActivity } from '../lib/types'
 // place so the page doesn't flicker every few seconds.
 const POLL_MS = 8000
 
-export function useDispatchActivity() {
+// Pass a dispatcherName to scope the whole activity feed to just that
+// dispatcher's own orders (and only the calls/alerts/inbox/approvals tied
+// to one of those orders) -- used for the dispatcher role's own Dispatch
+// Agent tab. Omit it (or pass null/undefined) for the unscoped admin view.
+export function useDispatchActivity(dispatcherName?: string | null) {
   const [data, setData] = useState<DispatchActivity | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -16,7 +20,9 @@ export function useDispatchActivity() {
 
   const refetch = useCallback(async () => {
     if (isFirstLoad.current) setLoading(true)
-    const { data: body, error: err } = await supabase.functions.invoke('dispatch-agent-activity')
+    const { data: body, error: err } = await supabase.functions.invoke('dispatch-agent-activity', {
+      body: { dispatcherName: dispatcherName ?? null },
+    })
     if (err) {
       setError(err.message)
     } else {
@@ -27,7 +33,7 @@ export function useDispatchActivity() {
       setLoading(false)
       isFirstLoad.current = false
     }
-  }, [])
+  }, [dispatcherName])
 
   useEffect(() => {
     refetch()

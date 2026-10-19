@@ -143,7 +143,7 @@ export default function App() {
               <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
             )}
             {dispatcherTab === 'price_lists' && <PriceListsPage />}
-            {dispatcherTab === 'dispatch_agent' && <DispatchAgentPage />}
+            {dispatcherTab === 'dispatch_agent' && <DispatchAgentPage dispatcherName={profile.dispatcher_name} />}
           </>
         }
       />
