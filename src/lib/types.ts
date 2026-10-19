@@ -260,6 +260,11 @@ export interface DispatchActiveCall {
   // progress): 'outbound' if we have a "call-started" row for this call,
   // 'inbound' otherwise -- see dispatch-agent-activity for the exact logic.
   direction: 'inbound' | 'outbound'
+  // Only populated for outbound calls (read off their call-started row) --
+  // an inbound call has no order/technician link until it's done.
+  order_title: string | null
+  technician_name: string | null
+  purpose: string | null
   lines: DispatchLiveLine[]
 }
 

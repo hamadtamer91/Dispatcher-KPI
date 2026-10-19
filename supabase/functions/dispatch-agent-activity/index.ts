@@ -162,10 +162,17 @@ Deno.serve(async (req) => {
     // "call-started" row written immediately when it's placed, while an
     // inbound call doesn't get any row until it's done. So "has a
     // call-started row for this call_sid" is a reliable stand-in for
-    // "we placed it" until the real report lands.
-    const callStartedSids = new Set(
-      events.filter((e) => e.event_type === 'call-started' && e.call_sid).map((e) => e.call_sid as string),
-    )
+    // "we placed it" until the real report lands. Keep the row itself too --
+    // it carries the order_id/technician_id/purpose for that call, which is
+    // how the live banner can show who's on the phone and why, and how a
+    // dispatcher-scoped view can tell whether this call belongs to them.
+    const callStartedEventBySid = new Map<string, typeof events[number]>()
+    for (const e of events) {
+      if (e.event_type === 'call-started' && e.call_sid && !callStartedEventBySid.has(e.call_sid)) {
+        callStartedEventBySid.set(e.call_sid, e)
+      }
+    }
+    const callStartedSids = new Set(callStartedEventBySid.keys())
 
     // Dispatcher-scoped view: only calls/alerts/inbox/approvals tied to one
     // of this dispatcher's own orders (orders itself is already scoped by
@@ -193,18 +200,36 @@ Deno.serve(async (req) => {
       for (const o of extraOrders ?? []) orderTitleById.set(o.id, o.title)
     }
 
-    // Group live transcript lines by call -- a call counts as "active" only
-    // if it has no matching call_events row yet (that row is written once
-    // the call ends), otherwise it's just the tail of a call already shown
-    // in Recent Calls.
-    const eventCallSids = new Set(events.map((e) => e.call_sid).filter((s): s is string => !!s))
-    const liveByCallSid = new Map<string, typeof liveLines>()
+    // A call_sid is FINISHED once any event row for it carries a duration or
+    // an ended_reason -- both are only ever populated on the report written
+    // when the call ends, never on the "call-started" row. Everything else
+    // still in `events`/`liveLines` for a call_sid that isn't finished yet is
+    // a call still in progress right now.
+    const finishedCallSids = new Set(
+      events.filter((e) => e.call_sid && (e.duration_seconds != null || e.ended_reason != null)).map((e) => e.call_sid as string),
+    )
+
+    // Group live transcript lines by call (only while the call isn't
+    // finished -- once it is, those lines are just the tail of a call
+    // already shown in Recent Calls).
+    const linesByCallSid = new Map<string, typeof liveLines>()
     for (const line of liveLines) {
-      if (!line.call_sid || eventCallSids.has(line.call_sid)) continue
-      const existing = liveByCallSid.get(line.call_sid)
+      if (!line.call_sid || finishedCallSids.has(line.call_sid)) continue
+      const existing = linesByCallSid.get(line.call_sid)
       if (existing) existing.push(line)
-      else liveByCallSid.set(line.call_sid, [line])
+      else linesByCallSid.set(line.call_sid, [line])
     }
+
+    // A call counts as live two ways: it has a call-started row with no
+    // finished report yet (true the instant a call is placed -- Raley's own
+    // dashboard shows "On a call" right away, it doesn't wait for the first
+    // transcript line), or it has recent transcript lines with no finished
+    // report yet (catches inbound calls, which never get a call-started row
+    // at all). Union of both, deduped by call_sid.
+    const liveSids = new Set<string>([
+      ...[...callStartedSids].filter((sid) => !finishedCallSids.has(sid)),
+      ...linesByCallSid.keys(),
+    ])
 
     const responseBody = {
       orders: orders.map((o) => ({
@@ -290,20 +315,34 @@ Deno.serve(async (req) => {
         decision_note: a.decision_note ?? null,
         created_at: a.created_at,
       })),
-      // Calls in progress right now, with their transcript so far. Live
-      // lines carry no order_id at all, so there's no way to attribute one
-      // to a specific dispatcher's orders -- omit them entirely in the
-      // scoped view rather than show a call that might belong to someone
-      // else's job.
-      live_calls: dispatcherName
-        ? []
-        : [...liveByCallSid.entries()].map(([call_sid, lines]) => ({
+      // Calls in progress right now, with their transcript so far (if any
+      // has arrived yet). Outbound calls are attributable to an order (and
+      // so to a dispatcher) via their call-started row; inbound calls have
+      // no order_id until they're done, so they're left out of a
+      // dispatcher-scoped view (but still shown, unscoped, to admins) rather
+      // than guessed at.
+      live_calls: [...liveSids]
+        .map((call_sid) => {
+          const startedEvent = callStartedEventBySid.get(call_sid)
+          const lines = linesByCallSid.get(call_sid) ?? []
+          const orderId = startedEvent?.order_id ?? null
+          if (dispatcherName && !inScope(orderId)) return null
+          const sd = (startedEvent?.structured_data ?? {}) as Record<string, unknown>
+          return {
             call_sid,
-            started_at: lines[0].created_at,
-            updated_at: lines[lines.length - 1].created_at,
+            // Prefer the call-started row's own timestamp (the real moment
+            // the call was placed) over the first transcript line's, which
+            // can lag behind by however long it takes someone to speak.
+            started_at: startedEvent?.created_at ?? lines[0]?.created_at ?? new Date().toISOString(),
+            updated_at: lines.length ? lines[lines.length - 1].created_at : (startedEvent?.created_at ?? new Date().toISOString()),
             direction: callStartedSids.has(call_sid) ? 'outbound' as const : 'inbound' as const,
+            order_title: orderId ? orderTitleById.get(orderId) ?? null : null,
+            technician_name: startedEvent?.technician_id ? techById.get(startedEvent.technician_id)?.name ?? null : null,
+            purpose: typeof sd.purpose === 'string' ? sd.purpose : null,
             lines: lines.map((l) => ({ role: l.role, text: l.text, created_at: l.created_at })),
-          })),
+          }
+        })
+        .filter((c): c is NonNullable<typeof c> => c !== null),
       fetched_at: new Date().toISOString(),
     }
 

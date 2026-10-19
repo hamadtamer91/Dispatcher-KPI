@@ -43,6 +43,45 @@ function DirectionPill({ direction }: { direction: 'inbound' | 'outbound' | null
     : <Badge variant="neutral">→ Outgoing</Badge>
 }
 
+// The original system's own "on a call" banner uses a different pill style
+// for a *live* call than for call history -- up/down arrow, all caps (see
+// the "↑ OUTGOING" pill on its live banner). Matched here for the same spot.
+function LiveDirectionPill({ direction }: { direction: 'inbound' | 'outbound' }) {
+  return direction === 'inbound'
+    ? <Badge variant="brand">↓ INCOMING</Badge>
+    : <Badge variant="neutral">↑ OUTGOING</Badge>
+}
+
+// Best-effort label for a call's purpose -- only "followup" is confirmed
+// against the original dashboard's own wording; the rest follow the same
+// pattern. Falls back to the raw value, capitalized, for anything new.
+const PURPOSE_LABEL: Record<string, string> = {
+  offer: 'Offer call',
+  followup: 'Follow-up call',
+  callback: 'Callback',
+  reminder: 'Reminder call',
+  checkin: 'Check-in call',
+  approval: 'Approval call',
+}
+function purposeLabel(purpose: string | null): string | null {
+  if (!purpose) return null
+  return PURPOSE_LABEL[purpose] ?? purpose.charAt(0).toUpperCase() + purpose.slice(1)
+}
+
+// "started 1 min ago" -- the original dashboard shows the live call's age
+// relative to now rather than a clock time, which reads better for
+// something still in progress.
+function formatElapsed(iso: string): string {
+  const started = new Date(iso).getTime()
+  if (Number.isNaN(started)) return iso
+  const minutes = Math.max(0, Math.round((Date.now() - started) / 60000))
+  if (minutes < 1) return 'started just now'
+  if (minutes === 1) return 'started 1 min ago'
+  if (minutes < 60) return `started ${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  return `started ${hours}h ${minutes % 60}m ago`
+}
+
 interface DispatchAgentPageProps {
   // When set (the dispatcher role), scopes the whole tab to just the orders
   // this dispatcher personally created, plus only the calls/alerts/inbox/
@@ -205,8 +244,17 @@ export function DispatchAgentPage({ dispatcherName }: DispatchAgentPageProps = {
               </p>
               {data.live_calls.map((c) => (
                 <div key={c.call_sid} className="bg-white rounded-lg border border-line p-3 space-y-1.5 max-h-48 overflow-y-auto">
-                  <p className="text-xs font-semibold text-ink-faint flex items-center gap-1.5">
-                    <DirectionPill direction={c.direction} /> On a call since {formatWhen(c.started_at)}
+                  <p className="text-xs font-semibold text-ink-faint flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 text-good">
+                      <span className="w-1.5 h-1.5 rounded-full bg-good" /> ON A CALL
+                    </span>
+                    <LiveDirectionPill direction={c.direction} />
+                    {(c.technician_name || c.order_title || c.purpose) && (
+                      <span className="text-ink">
+                        {[c.technician_name, c.order_title, purposeLabel(c.purpose)].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
+                    <span>{formatElapsed(c.started_at)}</span>
                   </p>
                   {c.lines.map((l, i) => (
                     <p key={i} className="text-sm">
