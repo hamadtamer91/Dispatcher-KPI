@@ -216,9 +216,9 @@ export function ProposalDetailPage() {
           />
           <p className="mt-1 text-xs text-ink-faint">
             Fill this in when the technician just asks for one flat price covering labor and parts together, instead of an hourly rate.
-            When set, this whole amount becomes the single Technician cost line below (no hours math, no separate parts) and the hourly
-            rate above is ignored. Leave it blank to have the AI work from the hourly rate and figure out hours, helper need, and parts
-            itself.
+            The AI still breaks it down into hours/parts rows below for the client — using the rate above as a guide — but scales the
+            costs so they always add up to this exact amount, since that's what actually gets paid out. Leave it blank to have the AI
+            work from the hourly rate alone and figure out hours, helper need, and parts itself.
           </p>
         </div>
 

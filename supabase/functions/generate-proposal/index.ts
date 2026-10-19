@@ -150,12 +150,12 @@ Deno.serve(async (req) => {
         .map((p: Part) => `- ${p.name}${p.sku ? ` (SKU ${p.sku})` : ''}${p.category ? ` [${p.category}]` : ''}`)
         .join('\n') || '(none configured yet)'
 
-    const modeSection = isFlatQuoteMode
-      ? `
-IMPORTANT -- flat quote mode: The technician gave the dispatcher ONE flat all-in price of $${flatQuote} for this entire job. That price already covers both labor and any parts/materials together -- it is not broken down by hours or by part. Because of this, do not estimate hours, do not decide on a helper, and do not itemize parts -- the system will create the single pricing line item on its own from this flat amount. Just focus on writing an accurate narrative from the notes and photos.
-`.trim()
-      : `
-Decide, from the notes (and photos, if present), how many hours of labor this job genuinely needs, and whether it requires a second person (a helper) in addition to the technician. Most small jobs don't need a helper -- only add one when the work truly calls for an extra set of hands (heavy or awkward material, working at height, holding something while the other person works, etc).
+    const flatQuoteContext = isFlatQuoteMode
+      ? `Context: the technician gave the dispatcher one flat all-in price of $${flatQuote} for this entire job (covering labor and any parts/materials together) -- that is the fixed amount the dispatcher will actually pay him. You should still estimate a normal, itemized hours/parts breakdown below for the client-facing proposal, exactly as you would for an hourly job -- the system will proportionally scale your estimated costs so the breakdown always totals the technician's $${flatQuote} ask, so focus on a realistic, well-proportioned breakdown rather than trying to hit that dollar total yourself.\n\n`
+      : ''
+
+    const modeSection = `
+${flatQuoteContext}Decide, from the notes (and photos, if present), how many hours of labor this job genuinely needs, and whether it requires a second person (a helper) in addition to the technician. Most small jobs don't need a helper -- only add one when the work truly calls for an extra set of hands (heavy or awkward material, working at height, holding something while the other person works, etc).
 
 Technician/helper hourly rates set by the dispatcher for this job -- use role_name exactly "Technician" for the primary tech's hours and exactly "Helper" for a second person's hours, rather than inventing another role name for them:
 - Technician: ${proposal.technician_rate != null ? `$${proposal.technician_rate}/hr` : 'not provided -- still estimate the hours needed; the dispatcher will price it manually'}
@@ -172,9 +172,7 @@ Do NOT invent parts the job wouldn't plausibly need, and do NOT pad the list wit
 If the work described is purely diagnostic/inspection, troubleshooting with no repair performed, a visit where nothing was replaced, or otherwise genuinely required no parts or materials, return ZERO kind="part" line items for this proposal -- never force a parts line onto a job that didn't use any.
 `.trim()
 
-    const lineItemRules = isFlatQuoteMode
-      ? `- line_items: return EXACTLY ONE item -- kind="labor", role_name="Technician", description="Technician labor and parts (flat quote)", quantity=1. The system prices this item from the flat quote directly; ignore cost/pricing entirely.`
-      : `- line_items: one per distinct task or material. kind="labor" for people's time (role_name "Technician", "Helper", or a catalog role as described above), kind="part" for a stocked part (part_name should match the catalog when possible), kind="other" for anything that is not labor or a cataloged part (permits, disposal fees, equipment rental, etc) -- for "other" items only, also supply suggested_unit_cost (your best estimate of the cost in USD, before markup).
+    const lineItemRules = `- line_items: one per distinct task or material. kind="labor" for people's time (role_name "Technician", "Helper", or a catalog role as described above), kind="part" for a stocked part (part_name should match the catalog when possible), kind="other" for anything that is not labor or a cataloged part (permits, disposal fees, equipment rental, etc) -- for "other" items only, also supply suggested_unit_cost (your best estimate of the cost in USD, before markup).
 - quantity is the number of hours (labor) or count/units (part/other).
 - Do not include markup, margin, or price in your line items -- only cost-side quantity/role/part. Pricing is computed separately by the system.`
 
@@ -271,19 +269,13 @@ ${lineItemRules}
       return jsonResponse({ error: 'The AI returned malformed JSON. Try again.' }, 502)
     }
 
-    // In flat-quote mode we don't trust the AI's line_items (even though the
-    // prompt asks for exactly one) -- we build the single pricing line item
-    // ourselves so the math is guaranteed correct regardless of what the
-    // model returns.
-    const effectiveLineItems: DraftLineItem[] = isFlatQuoteMode
-      ? [{ kind: 'labor', description: 'Technician labor and parts (flat quote)', role_name: 'Technician', quantity: 1 }]
-      : (draft.line_items ?? [])
+    const effectiveLineItems: DraftLineItem[] = draft.line_items ?? []
 
     const markupMult = 1 + (Number(proposal.markup_pct) || 0) / 100
     const laborByName = new Map((laborRates ?? []).map((r: LaborRate) => [r.role_name.toLowerCase().trim(), r]))
     const partsByName = new Map((parts ?? []).map((p: Part) => [p.name.toLowerCase().trim(), p]))
 
-    const lineItemRows = effectiveLineItems.map((li, idx) => {
+    const rawLineItemRows = effectiveLineItems.map((li, idx) => {
       let roleId: string | null = null
       let partId: string | null = null
       let unitCost = 0
@@ -291,9 +283,7 @@ ${lineItemRules}
 
       if (li.kind === 'labor') {
         const roleKey = (li.role_name ?? '').toLowerCase().trim()
-        if (isFlatQuoteMode) {
-          unitCost = flatQuote!
-        } else if (roleKey === 'technician' && proposal.technician_rate != null) {
+        if (roleKey === 'technician' && proposal.technician_rate != null) {
           unitCost = Number(proposal.technician_rate) || 0
         } else if (roleKey === 'helper' && proposal.helper_rate != null) {
           unitCost = Number(proposal.helper_rate) || 0
@@ -338,6 +328,41 @@ ${lineItemRules}
         sort_order: idx,
       }
     })
+
+    // In flat-quote mode the technician's real ask is a single fixed dollar
+    // amount, not the sum of catalog/hourly rates -- so after estimating a
+    // normal-looking hours/parts breakdown above (for the client-facing
+    // itemization), scale every line's cost proportionally so the breakdown's
+    // total cost always reconciles to exactly what the technician quoted.
+    // If the AI couldn't produce any priceable breakdown at all, fall back to
+    // a single flat-quote line so the technician's ask is still captured.
+    let lineItemRows = rawLineItemRows
+    if (isFlatQuoteMode) {
+      const naturalTotalCost = rawLineItemRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
+      if (naturalTotalCost > 0) {
+        const scale = flatQuote! / naturalTotalCost
+        lineItemRows = rawLineItemRows.map((r) => {
+          const scaledCost = round2(r.unit_cost * scale)
+          return { ...r, unit_cost: scaledCost, unit_price: round2(scaledCost * markupMult) }
+        })
+      } else {
+        lineItemRows = [
+          {
+            proposal_id: proposalId,
+            kind: 'labor' as const,
+            description: 'Technician labor and parts (flat quote)',
+            role_id: null,
+            part_id: null,
+            quantity: 1,
+            unit_cost: flatQuote!,
+            unit_price: round2(flatQuote! * markupMult),
+            needs_manual_pricing: false,
+            ai_suggested: true,
+            sort_order: 0,
+          },
+        ]
+      }
+    }
 
     // Regenerating replaces only the previously AI-suggested rows; anything the
     // dispatcher added by hand (ai_suggested = false) is left untouched.
