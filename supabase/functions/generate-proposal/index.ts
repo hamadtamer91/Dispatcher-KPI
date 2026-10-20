@@ -332,8 +332,13 @@ ${lineItemRules}
     // In flat-quote mode the technician's real ask is a single fixed dollar
     // amount, not the sum of catalog/hourly rates -- so after estimating a
     // normal-looking hours/parts breakdown above (for the client-facing
-    // itemization), scale every line's cost proportionally so the breakdown's
-    // total cost always reconciles to exactly what the technician quoted.
+    // itemization), scale every line's COST proportionally so the breakdown's
+    // total cost always reconciles to exactly what the technician quoted (this
+    // is pure cost/margin bookkeeping -- what we actually pay him).
+    // Labor's PRICE never moves with that scaling: it's pinned to the
+    // Technician/Helper rate the dispatcher entered, exactly like an hourly
+    // job, since that's the rate agreed with the client. Parts/other lines
+    // keep following cost -> markup -> price as usual.
     // If the AI couldn't produce any priceable breakdown at all, fall back to
     // a single flat-quote line so the technician's ask is still captured.
     let lineItemRows = rawLineItemRows
@@ -343,7 +348,8 @@ ${lineItemRules}
         const scale = flatQuote! / naturalTotalCost
         lineItemRows = rawLineItemRows.map((r) => {
           const scaledCost = round2(r.unit_cost * scale)
-          return { ...r, unit_cost: scaledCost, unit_price: priceFor(r.kind, scaledCost, markupMult) }
+          const unitPrice = r.kind === 'labor' ? r.unit_price : priceFor(r.kind, scaledCost, markupMult)
+          return { ...r, unit_cost: scaledCost, unit_price: unitPrice }
         })
       } else {
         lineItemRows = [

@@ -258,9 +258,9 @@ export function ProposalDetailPage() {
           />
           <p className="mt-1 text-xs text-ink-faint">
             Fill this in when the technician just asks for one flat price covering labor and parts together, instead of an hourly rate.
-            The AI still breaks it down into hours/parts rows below for the client — using the rate above as a guide — but scales the
-            costs so they always add up to this exact amount, since that's what actually gets paid out. Same as above, the labor rows
-            bill at cost with no markup; only the parts rows in the breakdown carry your Markup %. Leave it blank to have the AI work
+            The AI still breaks it down into hours/parts rows below for the client, and the labor rows bill at your Technician/Helper
+            rate — same as an hourly job, never adjusted by this amount. This amount only affects what gets tracked internally as your
+            cost, so your margin reflects what you actually pay him against what you bill the client. Leave it blank to have the AI work
             from the hourly rate alone and figure out hours, helper need, and parts itself.
           </p>
         </div>
