@@ -312,7 +312,7 @@ ${lineItemRules}
         needsManualPricing = true
       }
 
-      const unitPrice = round2(unitCost * markupMult)
+      const unitPrice = priceFor(li.kind, unitCost, markupMult)
 
       return {
         proposal_id: proposalId,
@@ -343,7 +343,7 @@ ${lineItemRules}
         const scale = flatQuote! / naturalTotalCost
         lineItemRows = rawLineItemRows.map((r) => {
           const scaledCost = round2(r.unit_cost * scale)
-          return { ...r, unit_cost: scaledCost, unit_price: round2(scaledCost * markupMult) }
+          return { ...r, unit_cost: scaledCost, unit_price: priceFor(r.kind, scaledCost, markupMult) }
         })
       } else {
         lineItemRows = [
@@ -355,7 +355,7 @@ ${lineItemRules}
             part_id: null,
             quantity: 1,
             unit_cost: flatQuote!,
-            unit_price: round2(flatQuote! * markupMult),
+            unit_price: priceFor('labor', flatQuote!, markupMult),
             needs_manual_pricing: false,
             ai_suggested: true,
             sort_order: 0,
@@ -525,6 +525,15 @@ function jsonResponse(body: unknown, status = 200) {
 
 function round2(n: number) {
   return Math.round(n * 100) / 100
+}
+
+// Labor (Technician/Helper hours) bills at exactly the dispatcher's agreed
+// rate -- that rate is already what's agreed with the client, so no markup
+// goes on top of it, in either hourly or flat-quote mode. Markup only
+// applies to parts/materials and other costs, which is where margin comes
+// from on these jobs.
+function priceFor(kind: 'labor' | 'part' | 'other', cost: number, markupMult: number): number {
+  return round2(kind === 'labor' ? cost : cost * markupMult)
 }
 
 function guessMediaType(path: string): string {

@@ -202,8 +202,9 @@ export function ProposalDetailPage() {
             />
           </div>
           <p className="sm:col-span-2 text-xs text-ink-faint">
-            The AI decides the hours needed and whether a helper is required from the notes and photos — these rates are just what it
-            multiplies those hours by. It'll fill in the breakdown as labor/part rows in the Line Items table below.
+            The AI decides the hours needed and whether a helper is required from the notes and photos, then fills in the breakdown as
+            labor/part rows below. Labor bills to the client at exactly these rates — no markup, since this is what's agreed with the
+            client. Markup only applies to parts/materials, so make sure Markup % is set to cover your margin on those.
           </p>
         </div>
 
@@ -258,8 +259,9 @@ export function ProposalDetailPage() {
           <p className="mt-1 text-xs text-ink-faint">
             Fill this in when the technician just asks for one flat price covering labor and parts together, instead of an hourly rate.
             The AI still breaks it down into hours/parts rows below for the client — using the rate above as a guide — but scales the
-            costs so they always add up to this exact amount, since that's what actually gets paid out. Leave it blank to have the AI
-            work from the hourly rate alone and figure out hours, helper need, and parts itself.
+            costs so they always add up to this exact amount, since that's what actually gets paid out. Same as above, the labor rows
+            bill at cost with no markup; only the parts rows in the breakdown carry your Markup %. Leave it blank to have the AI work
+            from the hourly rate alone and figure out hours, helper need, and parts itself.
           </p>
         </div>
 
@@ -376,6 +378,10 @@ export function ProposalDetailPage() {
             />
           </div>
         </div>
+        <p className="text-xs text-ink-faint -mt-2">
+          Applies to parts/materials (and any "Other" cost) only — Technician/Helper labor always bills at the rate you entered, with no
+          markup.
+        </p>
 
         {needsManual && (
           <p className="text-xs text-warn bg-warn-tint border border-warn/20 rounded-lg px-3 py-2">
