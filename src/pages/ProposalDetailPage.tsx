@@ -44,6 +44,8 @@ export function ProposalDetailPage() {
   const [technicianRate, setTechnicianRate] = useState('')
   const [helperRate, setHelperRate] = useState('')
   const [flatQuote, setFlatQuote] = useState('')
+  const [tripFee, setTripFee] = useState('')
+  const [assessmentFee, setAssessmentFee] = useState('')
   const [markupPct, setMarkupPct] = useState('75')
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({})
   const [uploading, setUploading] = useState(false)
@@ -56,6 +58,8 @@ export function ProposalDetailPage() {
       setTechnicianRate(proposal.technician_rate != null ? String(proposal.technician_rate) : '')
       setHelperRate(proposal.helper_rate != null ? String(proposal.helper_rate) : '')
       setFlatQuote(proposal.technician_flat_quote != null ? String(proposal.technician_flat_quote) : '')
+      setTripFee(proposal.trip_fee != null ? String(proposal.trip_fee) : '')
+      setAssessmentFee(proposal.assessment_fee != null ? String(proposal.assessment_fee) : '')
       setMarkupPct(String(proposal.markup_pct))
     }
   }, [
@@ -64,6 +68,8 @@ export function ProposalDetailPage() {
     proposal?.technician_rate,
     proposal?.helper_rate,
     proposal?.technician_flat_quote,
+    proposal?.trip_fee,
+    proposal?.assessment_fee,
     proposal?.markup_pct,
   ])
 
@@ -198,6 +204,41 @@ export function ProposalDetailPage() {
           <p className="sm:col-span-2 text-xs text-ink-faint">
             The AI decides the hours needed and whether a helper is required from the notes and photos — these rates are just what it
             multiplies those hours by. It'll fill in the breakdown as labor/part rows in the Line Items table below.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm font-bold text-ink">Trip Fee ($, optional)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={tripFee}
+              onChange={(e) => setTripFee(e.target.value)}
+              onBlur={() => updateProposal({ trip_fee: tripFee.trim() ? Number(tripFee) : null })}
+              disabled={isLocked}
+              placeholder="Leave blank if none"
+              className="field mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-bold text-ink">Assessment Fee ($, optional)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={assessmentFee}
+              onChange={(e) => setAssessmentFee(e.target.value)}
+              onBlur={() => updateProposal({ assessment_fee: assessmentFee.trim() ? Number(assessmentFee) : null })}
+              disabled={isLocked}
+              placeholder="Leave blank if none"
+              className="field mt-1"
+            />
+          </div>
+          <p className="sm:col-span-2 text-xs text-ink-faint">
+            Enter these manually when you're charging a trip or assessment fee. The AI adds them to the proposal as their own line
+            items, billed to the client at exactly what you enter here — no markup.
           </p>
         </div>
 

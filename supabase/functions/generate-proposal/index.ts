@@ -364,6 +364,49 @@ ${lineItemRules}
       }
     }
 
+    // Trip Fee / Assessment Fee are fixed amounts the dispatcher enters by
+    // hand, separate from the technician's labor/parts cost (and from any
+    // flat-quote reconciliation above) -- billed to the client at exactly
+    // what was entered, with no markup applied.
+    const tripFee = proposal.trip_fee != null ? Number(proposal.trip_fee) : null
+    if (tripFee != null && !Number.isNaN(tripFee) && tripFee > 0) {
+      lineItemRows = [
+        ...lineItemRows,
+        {
+          proposal_id: proposalId,
+          kind: 'other' as const,
+          description: 'Trip Fee',
+          role_id: null,
+          part_id: null,
+          quantity: 1,
+          unit_cost: tripFee,
+          unit_price: tripFee,
+          needs_manual_pricing: false,
+          ai_suggested: true,
+          sort_order: lineItemRows.length,
+        },
+      ]
+    }
+    const assessmentFee = proposal.assessment_fee != null ? Number(proposal.assessment_fee) : null
+    if (assessmentFee != null && !Number.isNaN(assessmentFee) && assessmentFee > 0) {
+      lineItemRows = [
+        ...lineItemRows,
+        {
+          proposal_id: proposalId,
+          kind: 'other' as const,
+          description: 'Assessment Fee',
+          role_id: null,
+          part_id: null,
+          quantity: 1,
+          unit_cost: assessmentFee,
+          unit_price: assessmentFee,
+          needs_manual_pricing: false,
+          ai_suggested: true,
+          sort_order: lineItemRows.length,
+        },
+      ]
+    }
+
     // Regenerating replaces only the previously AI-suggested rows; anything the
     // dispatcher added by hand (ai_suggested = false) is left untouched.
     await supabase.from('proposal_line_items').delete().eq('proposal_id', proposalId).eq('ai_suggested', true)

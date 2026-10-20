@@ -132,6 +132,8 @@ export interface Proposal {
   technician_rate: number | null
   helper_rate: number | null
   technician_flat_quote: number | null
+  trip_fee: number | null
+  assessment_fee: number | null
   ai_model: string | null
   ai_generated_at: string | null
   ai_raw_response: unknown
