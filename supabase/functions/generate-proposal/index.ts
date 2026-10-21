@@ -151,7 +151,7 @@ Deno.serve(async (req) => {
         .join('\n') || '(none configured yet)'
 
     const flatQuoteContext = isFlatQuoteMode
-      ? `Context: the technician gave the dispatcher one flat all-in price of $${flatQuote} for this entire job (covering labor and any parts/materials together) -- that is the fixed amount the dispatcher will actually pay him. You should still estimate a normal, itemized hours/parts breakdown below for the client-facing proposal, exactly as you would for an hourly job -- the system will proportionally scale your estimated costs so the breakdown always totals the technician's $${flatQuote} ask, so focus on a realistic, well-proportioned breakdown rather than trying to hit that dollar total yourself.\n\n`
+      ? `Context: the technician gave the dispatcher one flat all-in price of $${flatQuote} for this entire job (covering labor and any parts/materials together) -- that is the fixed amount the dispatcher will actually pay him. You should still estimate a normal, itemized hours/parts breakdown below for the client-facing proposal, exactly as you would for an hourly job -- the system will scale your estimated PARTS/MATERIALS cost (never the labor hours/rate) so that labor cost plus scaled parts cost reconciles to the technician's $${flatQuote} ask, so focus on a realistic, well-proportioned breakdown rather than trying to hit that dollar total yourself.\n\n`
       : ''
 
     const modeSection = `
@@ -164,15 +164,16 @@ Technician/helper hourly rates set by the dispatcher for this job -- use role_na
 Known labor roles catalog (use one of these exact names instead of "Technician"/"Helper" only if a line item is clearly a different, specialized trade role not covered by the two rates above; if none fit, invent a short clear role name):
 ${laborList}
 
-Known parts catalog (use these exact names when a line item is a stocked part; if the part isn't listed, use "other" instead):
+Known parts catalog (use the exact name when a line item matches one of these stocked parts):
 ${partsList}
 
-Parts/materials -- think like an experienced technician in this trade, not a transcriptionist: decide what parts and materials this job actually required based on the work described (trade/subtrade, what was diagnosed, what was done), using the technician's notes as your primary source but not limited only to what they explicitly itemized. If the notes describe a repair or replacement (e.g. "replaced the leaking shutoff valve," "swapped the failed ballast"), infer the specific parts that job realistically consumes even when the technician didn't spell every one out (a valve swap typically also needs fittings/tape/sealant; a ballast swap may need wire nuts; etc.) -- use your trade knowledge, not generic guesses. Create a SEPARATE kind="part" line item for each distinct part you can reasonably identify, with a realistic quantity each.
-Do NOT invent parts the job wouldn't plausibly need, and do NOT pad the list with vague filler ("miscellaneous materials," "misc parts") just to have something there.
+Parts/materials -- think like an experienced technician in this trade, not a transcriptionist: decide what parts and materials this job actually required based on the work described (trade/subtrade, what was diagnosed, what was done), using the technician's notes as your primary source but not limited only to what they explicitly itemized. If the notes describe a repair or replacement (e.g. "replaced the leaking shutoff valve," "swapped the failed ballast"), infer the specific parts that job realistically consumes even when the technician didn't spell every one out (a valve swap typically also needs fittings/tape/sealant; a ballast swap may need wire nuts; etc.) -- use your trade knowledge, not generic guesses. Create a SEPARATE kind="part" line item for each distinct part you can reasonably identify, with a realistic quantity each. This materials list is the proposal's only source of margin -- labor always bills at the dispatcher's exact rate with zero markup -- so be thorough rather than sparing: include the ordinary consumables and supporting materials a real job like this would use (fasteners, sealant/adhesive, tape, primer, trim, cleanup/disposal supplies, PPE, etc, as relevant to the trade) at realistic quantities, even when the notes don't spell each one out individually.
+Always use kind="part" for a part or material, whether or not it matches the catalog above -- never kind="other" just because it isn't a stocked item. When it doesn't match the catalog, leave part_name blank and instead supply suggested_unit_cost with your best estimate of its cost in USD, before markup, so it still prices out and counts toward the client-facing materials total instead of needing the dispatcher to price it by hand.
+Do NOT invent parts the job wouldn't plausibly need, and do NOT pad the list with vague filler ("miscellaneous materials," "misc parts") just to have something there -- thoroughness means naming the real consumables the job would use, not adding line items for their own sake.
 If the work described is purely diagnostic/inspection, troubleshooting with no repair performed, a visit where nothing was replaced, or otherwise genuinely required no parts or materials, return ZERO kind="part" line items for this proposal -- never force a parts line onto a job that didn't use any.
 `.trim()
 
-    const lineItemRules = `- line_items: one per distinct task or material. kind="labor" for people's time (role_name "Technician", "Helper", or a catalog role as described above), kind="part" for a stocked part (part_name should match the catalog when possible), kind="other" for anything that is not labor or a cataloged part (permits, disposal fees, equipment rental, etc) -- for "other" items only, also supply suggested_unit_cost (your best estimate of the cost in USD, before markup).
+    const lineItemRules = `- line_items: one per distinct task or material. kind="labor" for people's time (role_name "Technician", "Helper", or a catalog role as described above). kind="part" for any part or material, whether or not it's in the known catalog -- set part_name to the matching catalog name when it matches, and when it doesn't, leave part_name blank and supply suggested_unit_cost instead. kind="other" is only for real non-part, non-labor costs (permits, disposal fees, equipment rental, etc) -- also supply suggested_unit_cost for those.
 - quantity is the number of hours (labor) or count/units (part/other).
 - Do not include markup, margin, or price in your line items -- only cost-side quantity/role/part. Pricing is computed separately by the system.`
 
@@ -304,6 +305,11 @@ ${lineItemRules}
         if (match) {
           partId = match.id
           unitCost = Number(match.unit_cost) || 0
+        } else if (li.suggested_unit_cost != null) {
+          // Not a stocked catalog part, but the AI estimated its cost -- keep
+          // it priced and counted under Parts Cost instead of falling back to
+          // needs-manual-pricing with a $0 cost.
+          unitCost = Number(li.suggested_unit_cost) || 0
         } else {
           needsManualPricing = true
         }
@@ -332,26 +338,26 @@ ${lineItemRules}
     // In flat-quote mode the technician's real ask is a single fixed dollar
     // amount, not the sum of catalog/hourly rates -- so after estimating a
     // normal-looking hours/parts breakdown above (for the client-facing
-    // itemization), scale every line's COST proportionally so the breakdown's
-    // total cost always reconciles to exactly what the technician quoted (this
-    // is pure cost/margin bookkeeping -- what we actually pay him).
-    // Labor's PRICE never moves with that scaling: it's pinned to the
-    // Technician/Helper rate the dispatcher entered, exactly like an hourly
-    // job, since that's the rate agreed with the client. Parts/other lines
-    // keep following cost -> markup -> price as usual.
+    // itemization), reconcile cost/margin bookkeeping to what the technician
+    // actually quoted.
+    // Labor's COST *and* PRICE are both pinned to the Technician/Helper rate
+    // the dispatcher entered, exactly like an hourly job -- that's both what
+    // we pay him and what's agreed with the client for his hours, so neither
+    // side of it should ever drift from that rate. Only the non-labor
+    // (parts/other) lines are scaled, so that labor cost + scaled non-labor
+    // cost reconciles to the technician's flat $ ask. Parts/other prices keep
+    // following cost -> markup -> price as usual, off the scaled cost.
     // If the AI couldn't produce any priceable breakdown at all, fall back to
     // a single flat-quote line so the technician's ask is still captured.
     let lineItemRows = rawLineItemRows
     if (isFlatQuoteMode) {
-      const naturalTotalCost = rawLineItemRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
-      if (naturalTotalCost > 0) {
-        const scale = flatQuote! / naturalTotalCost
-        lineItemRows = rawLineItemRows.map((r) => {
-          const scaledCost = round2(r.unit_cost * scale)
-          const unitPrice = r.kind === 'labor' ? r.unit_price : priceFor(r.kind, scaledCost, markupMult)
-          return { ...r, unit_cost: scaledCost, unit_price: unitPrice }
-        })
-      } else {
+      const laborRows = rawLineItemRows.filter((r) => r.kind === 'labor')
+      const nonLaborRows = rawLineItemRows.filter((r) => r.kind !== 'labor')
+      const laborNaturalCost = laborRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
+      const nonLaborNaturalCost = nonLaborRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
+      const remainingForNonLabor = round2(flatQuote! - laborNaturalCost)
+
+      if (rawLineItemRows.length === 0) {
         lineItemRows = [
           {
             proposal_id: proposalId,
@@ -367,7 +373,41 @@ ${lineItemRules}
             sort_order: 0,
           },
         ]
+      } else if (nonLaborNaturalCost > 0 && remainingForNonLabor > 0) {
+        // Normal case: scale the estimated parts/other cost so labor (pinned)
+        // + scaled non-labor cost reconciles exactly to the flat quote.
+        const scale = remainingForNonLabor / nonLaborNaturalCost
+        lineItemRows = rawLineItemRows.map((r) => {
+          if (r.kind === 'labor') return r
+          const scaledCost = round2(r.unit_cost * scale)
+          return { ...r, unit_cost: scaledCost, unit_price: priceFor(r.kind, scaledCost, markupMult) }
+        })
+      } else if (nonLaborNaturalCost === 0 && remainingForNonLabor > 0) {
+        // The AI didn't itemize any parts/materials, but the flat quote asks
+        // for more than labor alone costs -- keep that gap accounted for (and
+        // still markup-eligible) as a single catch-all materials line instead
+        // of silently dropping it, and flag it for the dispatcher to review.
+        lineItemRows = [
+          ...rawLineItemRows,
+          {
+            proposal_id: proposalId,
+            kind: 'other' as const,
+            description: 'Parts & materials (per technician’s flat quote)',
+            role_id: null,
+            part_id: null,
+            quantity: 1,
+            unit_cost: remainingForNonLabor,
+            unit_price: priceFor('other', remainingForNonLabor, markupMult),
+            needs_manual_pricing: true,
+            ai_suggested: true,
+            sort_order: rawLineItemRows.length,
+          },
+        ]
       }
+      // else: the flat quote doesn't even cover the labor cost alone (remainingForNonLabor <= 0) --
+      // leave parts/other at their natural, unscaled cost/price rather than forcing a nonsensical
+      // negative or zero scale. The resulting margin will honestly reflect that mismatch so it's
+      // visible instead of hidden, which is worth a second look at the entered rate or flat quote.
     }
 
     // Trip Fee / Assessment Fee are fixed amounts the dispatcher enters by
