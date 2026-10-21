@@ -150,8 +150,10 @@ Deno.serve(async (req) => {
         .map((p: Part) => `- ${p.name}${p.sku ? ` (SKU ${p.sku})` : ''}${p.category ? ` [${p.category}]` : ''}`)
         .join('\n') || '(none configured yet)'
 
+    const markupPctNum = Number(proposal.markup_pct) || 0
+    const flatQuoteTarget = round2(flatQuote! * (1 + markupPctNum / 100))
     const flatQuoteContext = isFlatQuoteMode
-      ? `Context: the technician gave the dispatcher one flat all-in price of $${flatQuote} for this entire job (covering labor and any parts/materials together) -- that is the fixed amount the dispatcher will actually pay him. You should still estimate a normal, itemized hours/parts breakdown below for the client-facing proposal, exactly as you would for an hourly job -- the system will scale your estimated PARTS/MATERIALS cost (never the labor hours/rate) so that labor cost plus scaled parts cost reconciles to the technician's $${flatQuote} ask, so focus on a realistic, well-proportioned breakdown rather than trying to hit that dollar total yourself.\n\n`
+      ? `Context: the technician gave the dispatcher one flat all-in price of $${flatQuote} for this entire job (covering labor and any parts/materials together) -- that is the fixed amount the dispatcher will actually pay him, no matter how the hours/parts break down. The dispatcher's markup for this job is ${markupPctNum}%, applied against that whole $${flatQuote} -- so the client-facing proposal should come out to roughly $${flatQuoteTarget} once priced. Since what the technician is paid doesn't change based on the hours you itemize, the hours of Technician/Helper time (and whether a helper is genuinely warranted) are, together with the parts/materials, what earns that margin here -- size a realistic, defensible breakdown that a real job like this could plausibly need, spread across labor and materials together rather than loading it all onto parts alone. "Reasonable and defensible" is the ceiling, though -- never invent scope the notes don't support just to reach the dollar figure.\n\n`
       : ''
 
     const modeSection = `
@@ -167,7 +169,7 @@ ${laborList}
 Known parts catalog (use the exact name when a line item matches one of these stocked parts):
 ${partsList}
 
-Parts/materials -- think like an experienced technician in this trade, not a transcriptionist: decide what parts and materials this job actually required based on the work described (trade/subtrade, what was diagnosed, what was done), using the technician's notes as your primary source but not limited only to what they explicitly itemized. If the notes describe a repair or replacement (e.g. "replaced the leaking shutoff valve," "swapped the failed ballast"), infer the specific parts that job realistically consumes even when the technician didn't spell every one out (a valve swap typically also needs fittings/tape/sealant; a ballast swap may need wire nuts; etc.) -- use your trade knowledge, not generic guesses. Create a SEPARATE kind="part" line item for each distinct part you can reasonably identify, with a realistic quantity each. This materials list is the proposal's only source of margin -- labor always bills at the dispatcher's exact rate with zero markup -- so be thorough rather than sparing: include the ordinary consumables and supporting materials a real job like this would use (fasteners, sealant/adhesive, tape, primer, trim, cleanup/disposal supplies, PPE, etc, as relevant to the trade) at realistic quantities, even when the notes don't spell each one out individually.
+Parts/materials -- think like an experienced technician in this trade, not a transcriptionist: decide what parts and materials this job actually required based on the work described (trade/subtrade, what was diagnosed, what was done), using the technician's notes as your primary source but not limited only to what they explicitly itemized. If the notes describe a repair or replacement (e.g. "replaced the leaking shutoff valve," "swapped the failed ballast"), infer the specific parts that job realistically consumes even when the technician didn't spell every one out (a valve swap typically also needs fittings/tape/sealant; a ballast swap may need wire nuts; etc.) -- use your trade knowledge, not generic guesses. Create a SEPARATE kind="part" line item for each distinct part you can reasonably identify, with a realistic quantity each. Materials are always a markup-eligible source of margin here (the hourly rate itself is never marked up, in either pricing mode) -- so be thorough rather than sparing: include the ordinary consumables and supporting materials a real job like this would use (fasteners, sealant/adhesive, tape, primer, trim, cleanup/disposal supplies, PPE, etc, as relevant to the trade) at realistic quantities, even when the notes don't spell each one out individually.
 Always use kind="part" for a part or material, whether or not it matches the catalog above -- never kind="other" just because it isn't a stocked item. When it doesn't match the catalog, leave part_name blank and instead supply suggested_unit_cost with your best estimate of its cost in USD, before markup, so it still prices out and counts toward the client-facing materials total instead of needing the dispatcher to price it by hand.
 Do NOT invent parts the job wouldn't plausibly need, and do NOT pad the list with vague filler ("miscellaneous materials," "misc parts") just to have something there -- thoroughness means naming the real consumables the job would use, not adding line items for their own sake.
 If the work described is purely diagnostic/inspection, troubleshooting with no repair performed, a visit where nothing was replaced, or otherwise genuinely required no parts or materials, return ZERO kind="part" line items for this proposal -- never force a parts line onto a job that didn't use any.
@@ -335,29 +337,38 @@ ${lineItemRules}
       }
     })
 
-    // In flat-quote mode the technician's real ask is a single fixed dollar
-    // amount, not the sum of catalog/hourly rates -- so after estimating a
-    // normal-looking hours/parts breakdown above (for the client-facing
-    // itemization), reconcile cost/margin bookkeeping to what the technician
-    // actually quoted.
-    // Labor's COST *and* PRICE are both pinned to the Technician/Helper rate
-    // the dispatcher entered, exactly like an hourly job -- that's both what
-    // we pay him and what's agreed with the client for his hours, so neither
-    // side of it should ever drift from that rate. Only the non-labor
-    // (parts/other) lines are scaled, so that labor cost + scaled non-labor
-    // cost reconciles to the technician's flat $ ask. Parts/other prices keep
-    // following cost -> markup -> price as usual, off the scaled cost.
+    // In flat-quote mode the technician is paid ONE fixed amount no matter
+    // how the job breaks down into hours and parts -- so that flat $ figure
+    // IS the whole real cost of the job; it isn't actually split into
+    // "labor cost" vs "parts cost" the way an hourly job's cost is. The
+    // itemized hours/helper/parts breakdown below exists to explain and bill
+    // the job to the client, not to reflect what's paid out line by line --
+    // so every line's COST is allocated proportionally (from the natural,
+    // unscaled estimate above) purely so the lines reconcile back to exactly
+    // the technician's flat $ ask.
+    // PRICE is never tied to that cost allocation: labor still prices at
+    // hours x the agreed Technician/Helper rate (never marked up, exactly
+    // like an hourly job -- the rate itself never moves), and parts/other
+    // price at their allocated cost x markup. Because the flat payout doesn't
+    // change no matter how many hours/parts are itemized, a fuller, still-
+    // reasonable breakdown (see the guidance above) directly raises the price
+    // -- and with it the margin -- which is how this mode earns margin on
+    // labor too, not just on parts.
     // If the AI couldn't produce any priceable breakdown at all, fall back to
     // a single flat-quote line so the technician's ask is still captured.
     let lineItemRows = rawLineItemRows
     if (isFlatQuoteMode) {
-      const laborRows = rawLineItemRows.filter((r) => r.kind === 'labor')
-      const nonLaborRows = rawLineItemRows.filter((r) => r.kind !== 'labor')
-      const laborNaturalCost = laborRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
-      const nonLaborNaturalCost = nonLaborRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
-      const remainingForNonLabor = round2(flatQuote! - laborNaturalCost)
-
-      if (rawLineItemRows.length === 0) {
+      const naturalTotalCost = rawLineItemRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
+      if (naturalTotalCost > 0) {
+        const scale = flatQuote! / naturalTotalCost
+        lineItemRows = rawLineItemRows.map((r) => {
+          const scaledCost = round2(r.unit_cost * scale)
+          // Labor's price is never scaled or tied to its allocated cost --
+          // it's always exactly hours x the agreed rate, same as an hourly job.
+          const unitPrice = r.kind === 'labor' ? r.unit_price : priceFor(r.kind, scaledCost, markupMult)
+          return { ...r, unit_cost: scaledCost, unit_price: unitPrice }
+        })
+      } else {
         lineItemRows = [
           {
             proposal_id: proposalId,
@@ -373,41 +384,7 @@ ${lineItemRules}
             sort_order: 0,
           },
         ]
-      } else if (nonLaborNaturalCost > 0 && remainingForNonLabor > 0) {
-        // Normal case: scale the estimated parts/other cost so labor (pinned)
-        // + scaled non-labor cost reconciles exactly to the flat quote.
-        const scale = remainingForNonLabor / nonLaborNaturalCost
-        lineItemRows = rawLineItemRows.map((r) => {
-          if (r.kind === 'labor') return r
-          const scaledCost = round2(r.unit_cost * scale)
-          return { ...r, unit_cost: scaledCost, unit_price: priceFor(r.kind, scaledCost, markupMult) }
-        })
-      } else if (nonLaborNaturalCost === 0 && remainingForNonLabor > 0) {
-        // The AI didn't itemize any parts/materials, but the flat quote asks
-        // for more than labor alone costs -- keep that gap accounted for (and
-        // still markup-eligible) as a single catch-all materials line instead
-        // of silently dropping it, and flag it for the dispatcher to review.
-        lineItemRows = [
-          ...rawLineItemRows,
-          {
-            proposal_id: proposalId,
-            kind: 'other' as const,
-            description: 'Parts & materials (per technician’s flat quote)',
-            role_id: null,
-            part_id: null,
-            quantity: 1,
-            unit_cost: remainingForNonLabor,
-            unit_price: priceFor('other', remainingForNonLabor, markupMult),
-            needs_manual_pricing: true,
-            ai_suggested: true,
-            sort_order: rawLineItemRows.length,
-          },
-        ]
       }
-      // else: the flat quote doesn't even cover the labor cost alone (remainingForNonLabor <= 0) --
-      // leave parts/other at their natural, unscaled cost/price rather than forcing a nonsensical
-      // negative or zero scale. The resulting margin will honestly reflect that mismatch so it's
-      // visible instead of hidden, which is worth a second look at the entered rate or flat quote.
     }
 
     // Trip Fee / Assessment Fee are fixed amounts the dispatcher enters by

@@ -17,7 +17,13 @@ const STATUS_VARIANT: Record<ProposalStatus, BadgeVariant> = {
   sent: 'good',
 }
 
-const MARGIN_FLOOR_PCT = 50
+// Margin % and Markup % are different numbers: at a given Markup %, the
+// highest margin a proposal can ever mathematically reach is
+// markup / (1 + markup) -- at the default 75% markup that's ~42.9%, even on
+// a job that's 100% parts/materials, since margin asymptotically approaches
+// 100% only as markup goes to infinity. 50% would need ~100% markup to even
+// be reachable, so the floor is set below that ceiling instead of above it.
+const MARGIN_FLOOR_PCT = 35
 
 export function ProposalDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -87,6 +93,7 @@ export function ProposalDetailPage() {
   const workOrder = useMemo(() => wos.find((w) => w.wo === proposal?.wo), [wos, proposal?.wo])
 
   const isLocked = proposal?.status === 'approved' || proposal?.status === 'sent'
+  const isFlatQuoteMode = proposal?.technician_flat_quote != null && Number(proposal.technician_flat_quote) > 0
 
   const subtotalPrice = lineItems.reduce((s, li) => s + li.quantity * li.unit_price, 0)
   const technicianCost = lineItems.filter((li) => li.kind === 'labor').reduce((s, li) => s + li.quantity * li.unit_cost, 0)
@@ -96,6 +103,11 @@ export function ProposalDetailPage() {
   const marginPct = subtotalPrice > 0 ? ((subtotalPrice - subtotalCost) / subtotalPrice) * 100 : 0
   const belowFloor = subtotalPrice > 0 && marginPct < MARGIN_FLOOR_PCT
   const needsManual = lineItems.some((li) => li.needs_manual_pricing)
+  // In flat-quote mode, "Technician Cost" above is an ALLOCATION of the flat
+  // payout across lines (for bookkeeping), not a literal per-hour cost -- the
+  // technician is paid proposal.technician_flat_quote no matter how the hours
+  // break down, so that's the honest number to show instead.
+  const flatCostDisplay = isFlatQuoteMode ? Number(proposal!.technician_flat_quote) : technicianCost
 
   if (loading) return <p className="text-sm text-ink-faint py-8 text-center">Loading proposal...</p>
   if (!proposal) return <p className="text-sm text-danger">{error || 'Proposal not found.'}</p>
@@ -203,8 +215,9 @@ export function ProposalDetailPage() {
           </div>
           <p className="sm:col-span-2 text-xs text-ink-faint">
             The AI decides the hours needed and whether a helper is required from the notes and photos, then fills in the breakdown as
-            labor/part rows below. Labor bills to the client at exactly these rates — no markup, since this is what's agreed with the
-            client. Markup only applies to parts/materials, so make sure Markup % is set to cover your margin on those.
+            labor/part rows below. These rates themselves are never marked up — they bill at exactly what you enter, since that's what's
+            agreed with the client. On an hourly job, margin comes only from parts/materials, so make sure Markup % covers it there. On a
+            flat-quote job, the hours/helper the AI chooses also shape your margin — see the Flat Quote field below.
           </p>
         </div>
 
@@ -258,10 +271,11 @@ export function ProposalDetailPage() {
           />
           <p className="mt-1 text-xs text-ink-faint">
             Fill this in when the technician just asks for one flat price covering labor and parts together, instead of an hourly rate.
-            The AI still breaks it down into hours/parts rows below for the client, and the labor rows bill at your Technician/Helper
-            rate — same as an hourly job, never adjusted by this amount. This amount only affects what gets tracked internally as your
-            cost, so your margin reflects what you actually pay him against what you bill the client. Leave it blank to have the AI work
-            from the hourly rate alone and figure out hours, helper need, and parts itself.
+            This flat amount is what you actually pay him, no matter how many hours end up billed — your Technician/Helper rate per hour
+            is still never adjusted. So the AI sizes a realistic, defensible breakdown of hours, helper time, and parts/materials (based
+            on your Markup %, applied against this flat amount) to bill the client — since what you pay him doesn't change with the hours
+            billed, a fuller breakdown is what earns your margin here. Leave it blank to have the AI work from the hourly rate alone and
+            figure out hours, helper need, and parts itself (margin there comes only from parts).
           </p>
         </div>
 
@@ -379,8 +393,9 @@ export function ProposalDetailPage() {
           </div>
         </div>
         <p className="text-xs text-ink-faint -mt-2">
-          Applies to parts/materials (and any "Other" cost) only — Technician/Helper labor always bills at the rate you entered, with no
-          markup.
+          Applies to parts/materials (and any "Other" cost) — Technician/Helper labor always bills at the rate you entered, never marked
+          up. On a flat-quote job, this % also sets the AI's target for the whole proposal, since what you pay him is fixed regardless of
+          the hours billed.
         </p>
 
         {needsManual && (
@@ -441,9 +456,17 @@ export function ProposalDetailPage() {
             <p className="text-xs text-ink-faint">
               Price Subtotal: <span className="font-semibold text-ink-soft">${subtotalPrice.toFixed(2)}</span>
             </p>
-            <p className="text-xs text-ink-faint">Technician Cost: ${technicianCost.toFixed(2)}</p>
-            <p className="text-xs text-ink-faint">Parts Cost: ${partsCost.toFixed(2)}</p>
-            {otherCost > 0 && <p className="text-xs text-ink-faint">Other Cost: ${otherCost.toFixed(2)}</p>}
+            {isFlatQuoteMode ? (
+              <p className="text-xs text-ink-faint" title="What the technician is actually paid, flat -- doesn't change based on the hours/parts billed below.">
+                Technician's Flat Cost: ${flatCostDisplay.toFixed(2)}
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-ink-faint">Technician Cost: ${technicianCost.toFixed(2)}</p>
+                <p className="text-xs text-ink-faint">Parts Cost: ${partsCost.toFixed(2)}</p>
+              </>
+            )}
+            {otherCost > 0 && <p className="text-xs text-ink-faint">Other Cost (fees, etc): ${otherCost.toFixed(2)}</p>}
             <p className={`text-xs font-semibold ${belowFloor ? 'text-danger' : 'text-ink-soft'}`}>
               Margin: {marginPct.toFixed(1)}% {belowFloor && `— below ${MARGIN_FLOOR_PCT}% floor`}
             </p>
