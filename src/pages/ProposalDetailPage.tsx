@@ -111,10 +111,22 @@ export function ProposalDetailPage() {
   const marginPct = subtotalPrice > 0 ? ((subtotalPrice - subtotalCost) / subtotalPrice) * 100 : 0
   const belowFloor = subtotalPrice > 0 && marginPct < MARGIN_FLOOR_PCT
   const needsManual = lineItems.some((li) => li.needs_manual_pricing)
-  // In flat-quote mode, "Technician Cost" above is an ALLOCATION of the flat
-  // payout across lines (for bookkeeping), not a literal per-hour cost -- the
-  // technician is paid proposal.technician_flat_quote no matter how the hours
-  // break down, so that's the honest number to show instead.
+  // A part that isn't in your catalog (part_id null) still gets priced -- the
+  // AI supplies its own honest estimate of typical market cost rather than
+  // leaving it at $0 -- but that number hasn't been verified against a real
+  // supplier price the way a catalog match has. Flag those (and any other
+  // AI-estimated "Other" cost, excluding the fixed Trip/Assessment fees you
+  // enter yourself) so it's obvious which prices are worth a quick glance.
+  const isEstimatedLine = (li: ProposalLineItem) =>
+    !li.needs_manual_pricing &&
+    ((li.kind === 'part' && !li.part_id) ||
+      (li.kind === 'other' && li.description !== 'Trip Fee' && li.description !== 'Assessment Fee'))
+  const hasEstimatedPricing = lineItems.some(isEstimatedLine)
+  // In flat-quote mode, show what the technician actually asked for instead
+  // of the line items' own labor cost -- the proposal above is priced
+  // independently and realistically either way (see generate-proposal), so
+  // this is purely a side-by-side comparison: is his ask in line with what
+  // the job is realistically worth, or is it the pricing note's business?
   const flatCostDisplay = isFlatQuoteMode ? Number(proposal!.technician_flat_quote) : technicianCost
 
   if (loading) return <p className="text-sm text-ink-faint py-8 text-center">Loading proposal...</p>
@@ -457,13 +469,20 @@ export function ProposalDetailPage() {
         </div>
         <p className="text-xs text-ink-faint -mt-2">
           Applies to parts/materials (and any "Other" cost) — Technician/Helper labor always bills at the rate you entered, never marked
-          up. On a flat-quote job, this % also sets the AI's target for the whole proposal, since what you pay him is fixed regardless of
-          the hours billed.
+          up. This proposal is always priced on realistic cost and scope, never on what the technician asked to be paid — see "Technician's
+          Flat Cost" below for how that compares.
         </p>
 
         {needsManual && (
           <p className="text-xs text-warn bg-warn-tint border border-warn/20 rounded-lg px-3 py-2">
             Some line items didn't match a known labor role or part — set their cost manually below.
+          </p>
+        )}
+        {hasEstimatedPricing && (
+          <p className="text-xs text-ink-soft bg-canvas border border-line rounded-lg px-3 py-2">
+            Rows marked <span className="font-semibold">Est.</span> aren't in your parts catalog — their price is the AI's own estimate of
+            typical market cost. Worth a quick double-check before sending; add the part to your catalog if you price it often, so future
+            proposals use your own verified number instead.
           </p>
         )}
 
@@ -484,6 +503,7 @@ export function ProposalDetailPage() {
                 <LineItemRow
                   key={li.id}
                   item={li}
+                  estimated={isEstimatedLine(li)}
                   disabled={isLocked}
                   onChange={(patch) => updateLineItem(li.id, patch)}
                   onDelete={() => deleteLineItem(li.id)}
@@ -675,11 +695,13 @@ function NarrativeField({
 
 function LineItemRow({
   item,
+  estimated,
   disabled,
   onChange,
   onDelete,
 }: {
   item: ProposalLineItem
+  estimated: boolean
   disabled: boolean
   onChange: (patch: Partial<ProposalLineItem>) => void
   onDelete: () => void
@@ -703,6 +725,14 @@ function LineItemRow({
         {item.needs_manual_pricing && (
           <span className="ml-1 text-warn" title="Needs manual pricing">
             ●
+          </span>
+        )}
+        {estimated && (
+          <span
+            className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint border border-line rounded px-1 py-0.5 align-middle"
+            title="Not in your parts catalog -- this is the AI's own estimate of typical market cost"
+          >
+            Est.
           </span>
         )}
       </td>

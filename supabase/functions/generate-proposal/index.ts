@@ -673,7 +673,25 @@ ${lineItemRules}
         flatQuoteGapNote = `The technician asked to be paid $${flatQuote} flat for this job, but a realistic labor + materials cost for this scope is only about $${realisticJobCost}. Paying him the full $${flatQuote} would cost roughly $${overage} more than this job is worth -- consider negotiating him down toward $${realisticJobCost}, or budget the difference as a loss on this job. (The proposal above is priced independently of this and is not affected.)`
       }
     }
-    const combinedPricingNote = [flatQuoteGapNote, draft.pricing_note?.trim() || null].filter(Boolean).join('\n\n') || null
+    // Second backstop, same spirit as the flat-quote comparison above:
+    // computed in code, not left to the AI to notice. A part/material that
+    // isn't in your verified catalog is priced from the AI's own estimate of
+    // typical market cost -- usually fine, but if one estimate comes out
+    // unusually large it's worth a dispatcher's eyes before it goes to a
+    // client. Catalog-matched parts and labor are excluded (those prices are
+    // yours, not a guess); Trip/Assessment Fee lines are added after this
+    // point so they're naturally excluded too.
+    const OUTLIER_LINE_THRESHOLD = 500
+    const estimateOutliers = rawLineItemRows.filter(
+      (r) => !r.needs_manual_pricing && r.kind !== 'labor' && r.role_id == null && r.part_id == null && r.quantity * r.unit_cost > OUTLIER_LINE_THRESHOLD,
+    )
+    const estimateOutlierNote = estimateOutliers.length
+      ? `Heads-up: ${estimateOutliers.length === 1 ? 'this line item is' : 'these line items are'} priced from the AI's own market-cost estimate (not your parts catalog) and came out unusually high -- worth a quick check before sending: ${estimateOutliers
+          .map((r) => `"${r.description}" ($${round2(r.unit_cost)}/unit x ${r.quantity} = $${round2(r.quantity * r.unit_cost)})`)
+          .join(', ')}.`
+      : null
+
+    const combinedPricingNote = [flatQuoteGapNote, estimateOutlierNote, draft.pricing_note?.trim() || null].filter(Boolean).join('\n\n') || null
 
     const { data: updatedProposal, error: updateErr } = await supabase
       .from('proposals')
