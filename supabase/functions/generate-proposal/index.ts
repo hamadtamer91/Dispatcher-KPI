@@ -237,7 +237,7 @@ If the work described is purely diagnostic/inspection, troubleshooting with no r
 You are helping a facilities-maintenance dispatcher turn field technician notes into a client-facing repair/service proposal.
 
 Work order: ${workOrder?.wo ?? proposal.wo}
-Store/client: ${workOrder?.client ?? 'Unknown'}
+Store/client: ${proposal.client_name ?? workOrder?.client ?? 'Unknown'}
 Trade / Subtrade: ${workOrder?.trade ?? 'Unknown'} / ${workOrder?.subtrade ?? 'n/a'}
 Location: ${[workOrder?.address, workOrder?.city, workOrder?.state].filter(Boolean).join(', ') || 'Unknown'}
 Original issue description: ${workOrder?.description ?? 'n/a'}

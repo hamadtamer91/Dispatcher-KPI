@@ -49,6 +49,7 @@ export function ProposalDetailPage() {
   const { outcomes, recordProposalOutcome } = useQuoteOutcomes()
 
   const [notes, setNotes] = useState('')
+  const [clientName, setClientName] = useState('')
   const [technicianRate, setTechnicianRate] = useState('')
   const [helperRate, setHelperRate] = useState('')
   const [flatQuote, setFlatQuote] = useState('')
@@ -63,6 +64,7 @@ export function ProposalDetailPage() {
   useEffect(() => {
     if (proposal) {
       setNotes(proposal.technician_notes ?? '')
+      setClientName(proposal.client_name ?? '')
       setTechnicianRate(proposal.technician_rate != null ? String(proposal.technician_rate) : '')
       setHelperRate(proposal.helper_rate != null ? String(proposal.helper_rate) : '')
       setFlatQuote(proposal.technician_flat_quote != null ? String(proposal.technician_flat_quote) : '')
@@ -73,6 +75,7 @@ export function ProposalDetailPage() {
   }, [
     proposal?.id,
     proposal?.technician_notes,
+    proposal?.client_name,
     proposal?.technician_rate,
     proposal?.helper_rate,
     proposal?.technician_flat_quote,
@@ -119,6 +122,7 @@ export function ProposalDetailPage() {
     try {
       await updateProposal({
         technician_notes: notes,
+        client_name: clientName.trim() || null,
         technician_rate: technicianRate.trim() ? Number(technicianRate) : null,
         helper_rate: helperRate.trim() ? Number(helperRate) : null,
         technician_flat_quote: flatQuote.trim() ? Number(flatQuote) : null,
@@ -163,7 +167,7 @@ export function ProposalDetailPage() {
         <div>
           <h2 className="text-xl font-extrabold text-ink tracking-tight">Proposal — WO {proposal.wo}</h2>
           <p className="text-sm text-ink-soft mt-1">
-            {workOrder?.client || 'Unassigned store'} · {workOrder?.trade || 'n/a'} · v{proposal.version}
+            {proposal.client_name || workOrder?.client || 'Unassigned store'} · {workOrder?.trade || 'n/a'} · v{proposal.version}
           </p>
         </div>
         <Badge variant={STATUS_VARIANT[proposal.status]}>{PROPOSAL_STATUS_LABELS[proposal.status]}</Badge>
@@ -173,6 +177,22 @@ export function ProposalDetailPage() {
       {genError && <p className="text-sm text-danger bg-danger-tint border border-danger/20 rounded-lg p-3">{genError}</p>}
 
       <div className="panel p-5 space-y-4">
+        <div>
+          <label className="text-sm font-bold text-ink">Client Name</label>
+          <input
+            type="text"
+            value={clientName}
+            onChange={(e) => setClientName(e.target.value)}
+            onBlur={() => updateProposal({ client_name: clientName.trim() || null })}
+            disabled={isLocked}
+            placeholder={workOrder?.client ? `Defaults to "${workOrder.client}" from the work order` : 'e.g. CBRE -- Store #1234'}
+            className="field mt-1"
+          />
+          <p className="text-xs text-ink-faint mt-1">
+            Tells the AI who this proposal is for. Leave blank to use the work order's client automatically.
+          </p>
+        </div>
+
         <div>
           <label className="text-sm font-bold text-ink">Technician Notes</label>
           <textarea
@@ -519,7 +539,7 @@ export function ProposalDetailPage() {
           onSave={(outcome, feedback) =>
             recordProposalOutcome(proposal.id, {
               dispatcher_name: proposal.dispatcher_name,
-              client: workOrder?.client ?? null,
+              client: proposal.client_name ?? workOrder?.client ?? null,
               store: null,
               trade: workOrder?.trade ?? null,
               subtrade: workOrder?.subtrade ?? null,

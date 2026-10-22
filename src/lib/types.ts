@@ -121,6 +121,11 @@ export interface Proposal {
   id: string
   wo: string
   dispatcher_name: string | null
+  // Dispatcher-entered client name for this specific proposal -- feeds the
+  // AI prompt so it knows who the proposal is for even when the linked work
+  // order's own client field is blank. Falls back to the work order's
+  // client in the UI and the AI prompt when this is empty.
+  client_name: string | null
   version: number
   status: ProposalStatus
   markup_pct: number
