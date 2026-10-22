@@ -121,34 +121,61 @@ Deno.serve(async (req) => {
     // dispatcher has labeled (old quotes entered by hand, or past proposals
     // sent from this app), used as context so new proposals calibrate toward
     // what has actually gotten approved rather than pricing in a vacuum.
-    // Trade-matched history is most relevant; fall back to the broader set
-    // when there isn't much of it yet.
-    let outcomeRows: Array<{
+    // Same client + same trade is the most relevant history (a client like
+    // CBRE may push back harder or more easily than others) -- cascade
+    // outward (client+trade -> client only -> trade only -> everything)
+    // until there's enough to say something useful.
+    type OutcomeRow = {
       trade: string | null
+      client: string | null
       total_price: number | null
       markup_pct: number | null
       outcome: string
       client_feedback: string | null
-    }> = []
-    if (workOrder?.trade) {
-      const { data } = await supabase
+    }
+    const outcomeClientName = proposal.client_name ?? workOrder?.client ?? null
+    const outcomeTradeName = workOrder?.trade ?? null
+    const fetchOutcomes = async (filters: { client?: string; trade?: string }): Promise<OutcomeRow[]> => {
+      let q = supabase
         .from('quote_outcomes')
-        .select('trade, total_price, markup_pct, outcome, client_feedback')
-        .ilike('trade', workOrder.trade)
+        .select('trade, client, total_price, markup_pct, outcome, client_feedback')
         .order('created_at', { ascending: false })
         .limit(30)
-      outcomeRows = data ?? []
+      if (filters.client) q = q.ilike('client', filters.client)
+      if (filters.trade) q = q.ilike('trade', filters.trade)
+      const { data } = await q
+      return data ?? []
+    }
+
+    let outcomeRows: OutcomeRow[] = []
+    let outcomeScope: 'client_trade' | 'client' | 'trade' | 'all' = 'all'
+
+    if (outcomeClientName && outcomeTradeName) {
+      outcomeRows = await fetchOutcomes({ client: outcomeClientName, trade: outcomeTradeName })
+      outcomeScope = 'client_trade'
+    }
+    if (outcomeRows.length < 4 && outcomeClientName) {
+      outcomeRows = await fetchOutcomes({ client: outcomeClientName })
+      outcomeScope = 'client'
+    }
+    if (outcomeRows.length < 4 && outcomeTradeName) {
+      outcomeRows = await fetchOutcomes({ trade: outcomeTradeName })
+      outcomeScope = 'trade'
     }
     if (outcomeRows.length < 4) {
-      // Not enough trade-matched history to say much -- widen to every trade.
-      const { data } = await supabase
-        .from('quote_outcomes')
-        .select('trade, total_price, markup_pct, outcome, client_feedback')
-        .order('created_at', { ascending: false })
-        .limit(30)
-      outcomeRows = data ?? []
+      outcomeRows = await fetchOutcomes({})
+      outcomeScope = 'all'
     }
-    const outcomesContext = buildOutcomesContext(outcomeRows, workOrder?.trade ?? null)
+
+    const outcomeScopeLabel =
+      outcomeScope === 'client_trade'
+        ? `for ${outcomeClientName} ${outcomeTradeName} jobs specifically`
+        : outcomeScope === 'client'
+          ? `for ${outcomeClientName} jobs across trades (not enough ${outcomeTradeName ?? 'this trade'}-specific history for them yet)`
+          : outcomeScope === 'trade'
+            ? `for ${outcomeTradeName} jobs generally (not enough history for ${outcomeClientName ?? 'this client'} specifically)`
+            : 'across jobs generally (not enough labeled history yet)'
+    const outcomesContext = buildOutcomesContext(outcomeRows, outcomeScopeLabel)
 
     const { data: photos } = await supabase
       .from('proposal_photos')
@@ -671,8 +698,8 @@ function priceFor(kind: 'labor' | 'part' | 'other', cost: number, markupMult: nu
 // asked to be revised. Keeps it short on purpose; this supplements the AI's
 // judgment, it isn't meant to dominate the prompt.
 function buildOutcomesContext(
-  rows: Array<{ trade: string | null; total_price: number | null; markup_pct: number | null; outcome: string; client_feedback: string | null }>,
-  tradeFilter: string | null,
+  rows: Array<{ trade: string | null; client: string | null; total_price: number | null; markup_pct: number | null; outcome: string; client_feedback: string | null }>,
+  scopeLabel: string,
 ): string {
   if (!rows.length) return ''
 
@@ -696,12 +723,8 @@ function buildOutcomesContext(
     })
     .join('\n')
 
-  const scopeNote = tradeFilter && rows.some((r) => r.trade?.toLowerCase() === tradeFilter.toLowerCase())
-    ? `for ${tradeFilter} jobs specifically`
-    : 'across jobs generally (not enough history for this specific trade yet)'
-
   return `
-Real past outcomes to calibrate against (${scopeNote}): of ${rows.length} labeled quotes, ${approved.length} were approved and ${pushedBack.length} were rejected or asked to be revised/lowered.${
+Real past outcomes to calibrate against (${scopeLabel}): of ${rows.length} labeled quotes, ${approved.length} were approved and ${pushedBack.length} were rejected or asked to be revised/lowered.${
     approvedAvgMarkup != null ? ` Approved quotes averaged about ${approvedAvgMarkup}% markup.` : ''
   }${pushedBackAvgMarkup != null ? ` Rejected/revision-requested quotes averaged about ${pushedBackAvgMarkup}% markup.` : ''}${
     quotes ? `\nWhat clients actually said when they pushed back:\n${quotes}` : ''
