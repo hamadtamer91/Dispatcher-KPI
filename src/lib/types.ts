@@ -161,6 +161,12 @@ export interface Proposal {
   approval_likelihood_pct: number | null
   approval_likelihood_basis_n: number | null
   approval_likelihood_scope: string | null
+  // 'price_and_scope' when the nearest-outcomes match also weighed how
+  // similar the job itself reads (narrative/parts/labor), not just price --
+  // 'price_only' when this draft didn't have enough generated detail yet to
+  // compare scope, so it fell back to matching by price alone. Null
+  // alongside approval_likelihood_pct.
+  approval_likelihood_method: string | null
   subtotal_cost: number
   subtotal_price: number
   margin_pct: number | null

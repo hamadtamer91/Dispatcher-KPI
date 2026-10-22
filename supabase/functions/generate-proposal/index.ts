@@ -617,19 +617,90 @@ ${lineItemRules}
     // Rough "how likely is this to be approved" estimate -- NOT an AI
     // guess (language models are poorly calibrated at stating their own
     // confidence as a number). Instead: look at the N real logged outcomes
-    // (within the same client/trade scope already matched above) whose
-    // price was closest to this proposal's total, and report what fraction
-    // of those were actually approved. A real, explainable number from
-    // your own history, not a black box. Needs at least 3 priced outcomes
-    // in scope to say anything -- otherwise there's too little to go on.
-    const pricedOutcomeRows = outcomeRows.filter((r) => r.total_price != null && !Number.isNaN(Number(r.total_price)))
+    // (within the same client/trade scope already matched above) and report
+    // what fraction of the most RELEVANT ones were actually approved.
+    // "Relevant" used to mean "closest price" alone -- but price-only
+    // matching is blind to scope: a $2,600 wall-repair quote and a $2,600
+    // shelving-move quote look identical to a price-only match even though
+    // they're nothing alike, so it could rate a small job against unrelated
+    // bigger jobs that just happened to cost the same. So this blends two
+    // signals -- price closeness, and how similar the job itself reads
+    // (word/phrase overlap against each outcome's narrative/parts/labor
+    // detail, via jaccardSimilarity above) -- so a same-priced but unrelated
+    // job ranks further away than a similarly-scoped job at a different
+    // price. Still no external calls, no LLM self-confidence -- a fast,
+    // explainable nearest-neighbor over real rows. Needs at least 3 priced
+    // outcomes in scope to say anything -- otherwise there's too little to
+    // go on.
+    const pricedOutcomeRows = outcomeRowsWithDetail.filter((r) => r.total_price != null && !Number.isNaN(Number(r.total_price)))
     let approvalLikelihoodPct: number | null = null
     let approvalLikelihoodBasisN: number | null = null
+    let approvalLikelihoodMethod: 'price_and_scope' | 'price_only' | null = null
     if (pricedOutcomeRows.length >= 3 && subtotalPrice > 0) {
+      // Build the same kind of "what this job involves" text for the
+      // CURRENT proposal that outcomeRowsWithDetail already built for past
+      // ones (narrative + labor hours by role + parts list), so both sides
+      // of the comparison are the same shape.
+      const currentLaborSummary = effectiveLineItems
+        .filter((li) => li.kind === 'labor')
+        .map((li) => {
+          const hrs = li.quantity ?? 1
+          return `${li.role_name || 'Labor'} ${round2(hrs)}hr${hrs === 1 ? '' : 's'}`
+        })
+        .join(', ')
+      const currentPartsSummary = effectiveLineItems
+        .filter((li) => li.kind === 'part')
+        .map((li) => {
+          const name = li.part_name || li.description
+          const qty = li.quantity ?? 1
+          return qty > 1 ? `${name} x${qty}` : name
+        })
+        .slice(0, 10)
+        .join(', ')
+      const currentJobText = [
+        proposal.technician_notes?.trim() || null,
+        draft.narrative_scope?.trim() || null,
+        draft.narrative_findings?.trim() || null,
+        draft.narrative_recommendation?.trim() || null,
+        currentLaborSummary ? `Labor: ${currentLaborSummary}` : null,
+        currentPartsSummary ? `Parts: ${currentPartsSummary}` : null,
+      ]
+        .filter(Boolean)
+        .join(' -- ')
+      const currentTokens = tokenize(currentJobText)
+      const hasEnoughCurrentText = currentTokens.length >= 4
+
       const k = Math.min(10, pricedOutcomeRows.length)
-      const nearest = [...pricedOutcomeRows]
-        .sort((a, b) => Math.abs(Number(a.total_price) - subtotalPrice) - Math.abs(Number(b.total_price) - subtotalPrice))
-        .slice(0, k)
+      const priceDistances = pricedOutcomeRows.map((r) => Math.abs(Number(r.total_price) - subtotalPrice))
+      const maxPriceDist = Math.max(...priceDistances, 1)
+
+      let nearest: typeof pricedOutcomeRows
+      if (hasEnoughCurrentText) {
+        const scored = pricedOutcomeRows.map((r, i) => {
+          const priceNorm = priceDistances[i] / maxPriceDist // 0 (same price) .. 1 (furthest in this pool)
+          const rowTokens = tokenize(r.detail ?? '')
+          // An outcome with too little logged detail to compare scope
+          // against is scored neutral (neither penalized nor rewarded)
+          // rather than maximally dissimilar, so sparse old manual entries
+          // aren't automatically shoved to the bottom.
+          const textDissimilarity = rowTokens.length >= 3 ? 1 - jaccardSimilarity(currentTokens, rowTokens) : 0.5
+          // Even-weighted on purpose: price still matters (that's the whole
+          // point of the estimate) -- scope just stops it from treating an
+          // unrelated same-priced job as a good match.
+          return { row: r, score: 0.5 * priceNorm + 0.5 * textDissimilarity }
+        })
+        nearest = scored.sort((a, b) => a.score - b.score).slice(0, k).map((s) => s.row)
+        approvalLikelihoodMethod = 'price_and_scope'
+      } else {
+        // Not enough text on this proposal's own side (bare-bones notes, no
+        // AI draft detail) to compare scope against -- fall back to the
+        // original price-only match rather than scoring against noise.
+        nearest = [...pricedOutcomeRows]
+          .sort((a, b) => Math.abs(Number(a.total_price) - subtotalPrice) - Math.abs(Number(b.total_price) - subtotalPrice))
+          .slice(0, k)
+        approvalLikelihoodMethod = 'price_only'
+      }
+
       const approvedCount = nearest.filter((r) => r.outcome === 'approved').length
       approvalLikelihoodPct = Math.round((approvedCount / k) * 100)
       approvalLikelihoodBasisN = k
@@ -652,6 +723,7 @@ ${lineItemRules}
         approval_likelihood_pct: approvalLikelihoodPct,
         approval_likelihood_basis_n: approvalLikelihoodBasisN,
         approval_likelihood_scope: approvalLikelihoodPct != null ? outcomeScopeLabel : null,
+        approval_likelihood_method: approvalLikelihoodMethod,
         subtotal_cost: round2(subtotalCost),
         subtotal_price: round2(subtotalPrice),
         margin_pct: marginPct === null ? null : round2(marginPct),
@@ -784,6 +856,58 @@ function round2(n: number) {
 // from on these jobs.
 function priceFor(kind: 'labor' | 'part' | 'other', cost: number, markupMult: number): number {
   return round2(kind === 'labor' ? cost : cost * markupMult)
+}
+
+// Lightweight text-similarity helpers for the approval-likelihood match
+// below -- deliberately simple (word + adjacent-word-pair overlap, no
+// external NLP/embeddings call) so the estimate stays fast, free, and
+// explainable, same spirit as it not being an AI guess. Pasted quote text is
+// full of boilerplate ("WO#:", "Following our technician's inspection..."),
+// so a decent stopword list matters more here than algorithmic cleverness --
+// it's what keeps the comparison on the actual job (valve, drain, shelving,
+// wall) instead of the shared template wording every quote repeats.
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'to', 'of', 'in', 'on', 'for', 'with', 'is', 'was', 'were',
+  'be', 'been', 'being', 'this', 'that', 'it', 'its', 'our', 'we', 'he', 'she', 'they', 'at', 'as',
+  'by', 'from', 'their', 'will', 'would', 'should', 'could', 'has', 'have', 'had', 'not', 'no', 'all',
+  'any', 'also', 'into', 'out', 'up', 'down', 'over', 'under', 'per', 'via', 'due', 'once', 'after',
+  'before', 'during', 'upon', 'about', 'than', 'then', 'there', 'here', 'which', 'who', 'what', 'when',
+  'where', 'how', 'wo', 'web', 'following', 'technician', 'technicians', 'inspection', 'inspected',
+  'determined', 'found', 'existing', 'required', 'requires', 'require', 'repair', 'repaired', 'repairs',
+  'replace', 'replaced', 'replacement', 'install', 'installed', 'installation', 'service', 'serviced',
+  'incurred', 'trip', 'assessment', 'total', 'billed', 'job', 'work', 'order', 'notes', 'note', 'scope',
+  'findings', 'recommend', 'recommended', 'recommendation', 'client', 'store', 'site', 'visit', 'visited',
+  'unit', 'units', 'area', 'areas', 'issue', 'issues', 'system', 'labor', 'parts', 'material', 'materials',
+])
+
+function tokenize(text: string): string[] {
+  const words = (text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  const unigrams = words.filter((w) => w.length > 2 && !STOPWORDS.has(w))
+  // Adjacent-word pairs survive even when neither word alone is filtered --
+  // gives multi-word terms ("mop sink", "shutoff valve") real weight instead
+  // of dissolving into generic single words.
+  const bigrams: string[] = []
+  for (let i = 0; i < words.length - 1; i++) {
+    const a = words[i]
+    const b = words[i + 1]
+    if (a.length <= 2 || b.length <= 2 || (STOPWORDS.has(a) && STOPWORDS.has(b))) continue
+    bigrams.push(`${a}_${b}`)
+  }
+  return [...unigrams, ...bigrams]
+}
+
+function jaccardSimilarity(aTokens: string[], bTokens: string[]): number {
+  const aSet = new Set(aTokens)
+  const bSet = new Set(bTokens)
+  if (aSet.size === 0 || bSet.size === 0) return 0
+  let intersection = 0
+  for (const t of aSet) if (bSet.has(t)) intersection++
+  const union = aSet.size + bSet.size - intersection
+  return union === 0 ? 0 : intersection / union
 }
 
 // Turns labeled real-world quote outcomes (AI Learning tab) into a compact

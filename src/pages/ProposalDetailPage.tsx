@@ -407,6 +407,7 @@ export function ProposalDetailPage() {
           pct={proposal.approval_likelihood_pct}
           basisN={proposal.approval_likelihood_basis_n}
           scope={proposal.approval_likelihood_scope}
+          method={proposal.approval_likelihood_method}
         />
       )}
 
@@ -753,8 +754,19 @@ function LineItemRow({
 // explainable stat from the dispatcher's own history, shown as a two-segment
 // split bar so it reads at a glance alongside the price-approval reasoning
 // above it.
-function ApprovalLikelihoodPanel({ pct, basisN, scope }: { pct: number; basisN: number | null; scope: string | null }) {
+function ApprovalLikelihoodPanel({
+  pct,
+  basisN,
+  scope,
+  method,
+}: {
+  pct: number
+  basisN: number | null
+  scope: string | null
+  method: string | null
+}) {
   const rejectedPct = 100 - pct
+  const matchedBy = method === 'price_and_scope' ? 'price and job similarity' : 'price alone'
   return (
     <div className="panel p-5 space-y-3">
       <div className="flex items-center justify-between">
@@ -764,7 +776,7 @@ function ApprovalLikelihoodPanel({ pct, basisN, scope }: { pct: number; basisN: 
         </h3>
         {basisN != null && (
           <span className="text-xs text-ink-faint">
-            Based on the {basisN} closest-priced past job{basisN === 1 ? '' : 's'}
+            Based on the {basisN} closest-matching past job{basisN === 1 ? '' : 's'}
           </span>
         )}
       </div>
@@ -780,8 +792,8 @@ function ApprovalLikelihoodPanel({ pct, basisN, scope }: { pct: number; basisN: 
       </div>
 
       <p className="text-xs text-ink-soft">
-        Of the past jobs {scope ?? 'in your AI Learning history'} priced closest to this proposal's total, {pct}% were approved as-is.
-        It's a pattern match against real outcomes, not a guarantee -- use it as one more data point alongside your own judgment.
+        Of the past jobs {scope ?? 'in your AI Learning history'}, matched by {matchedBy}, {pct}% were approved as-is. It's a
+        pattern match against real outcomes, not a guarantee -- use it as one more data point alongside your own judgment.
       </p>
     </div>
   )
