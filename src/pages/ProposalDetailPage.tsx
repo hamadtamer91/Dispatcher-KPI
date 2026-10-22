@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle2, Download, Gauge, Plus, Send, Sp
 import { useProposalDetail } from '../hooks/useProposalDetail'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { useQuoteOutcomes } from '../hooks/useQuoteOutcomes'
+import { useCbreRateCard } from '../hooks/useCbreRateCard'
 import { exportProposalDocx } from '../lib/exportProposalDocx'
 import { PROPOSAL_STATUS_LABELS, QUOTE_OUTCOME_LABELS } from '../lib/types'
 import type { LineItemKind, ProposalLineItem, ProposalStatus, QuoteOutcomeResult } from '../lib/types'
@@ -47,6 +48,7 @@ export function ProposalDetailPage() {
   } = useProposalDetail(id)
   const { wos } = useWorkOrders()
   const { outcomes, recordProposalOutcome } = useQuoteOutcomes()
+  const { rows: cbreRates } = useCbreRateCard()
 
   const [notes, setNotes] = useState('')
   const [clientName, setClientName] = useState('')
@@ -55,6 +57,8 @@ export function ProposalDetailPage() {
   const [helperRate, setHelperRate] = useState('')
   const [flatQuote, setFlatQuote] = useState('')
   const [tripFee, setTripFee] = useState('')
+  const [cbreSubtradeId, setCbreSubtradeId] = useState('')
+  const [cbrePriceTier, setCbrePriceTier] = useState<'reg' | 'ot'>('reg')
   const [assessmentFee, setAssessmentFee] = useState('')
   const [markupPct, setMarkupPct] = useState('75')
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({})
@@ -99,6 +103,13 @@ export function ProposalDetailPage() {
   }, [photos, photoUrl])
 
   const workOrder = useMemo(() => wos.find((w) => w.wo === proposal?.wo), [wos, proposal?.wo])
+
+  // CBRE's rate card (Technician Rate = their "Standard" tier, Helper Rate =
+  // their "Apprentice" tier, trip fee fixed at $65) only applies to CBRE
+  // jobs -- check whatever client name is actually showing for this
+  // proposal, dispatcher override first, same fallback the header above uses.
+  const isCbreClient = (clientName || workOrder?.client || '').toLowerCase().includes('cbre')
+  const selectedCbreRate = cbreRates.find((r) => r.id === cbreSubtradeId)
 
   const isLocked = proposal?.status === 'approved' || proposal?.status === 'sent'
   const isFlatQuoteMode = proposal?.technician_flat_quote != null && Number(proposal.technician_flat_quote) > 0
@@ -147,6 +158,23 @@ export function ProposalDetailPage() {
     } catch (e) {
       setGenError((e as Error).message)
     }
+  }
+
+  const handleApplyCbreRate = async () => {
+    if (!selectedCbreRate) return
+    const standard = cbrePriceTier === 'ot' ? selectedCbreRate.standard_rate_ot : selectedCbreRate.standard_rate_reg
+    const apprentice = cbrePriceTier === 'ot' ? selectedCbreRate.apprentice_rate_ot : selectedCbreRate.apprentice_rate_reg
+    const nextTechnicianRate = standard != null ? String(standard) : ''
+    const nextHelperRate = apprentice != null ? String(apprentice) : ''
+    const nextTripFee = String(selectedCbreRate.trip_charge)
+    setTechnicianRate(nextTechnicianRate)
+    setHelperRate(nextHelperRate)
+    setTripFee(nextTripFee)
+    await updateProposal({
+      technician_rate: standard,
+      helper_rate: apprentice,
+      trip_fee: selectedCbreRate.trip_charge,
+    })
   }
 
   const handleAddLineItem = async (kind: LineItemKind) => {
@@ -239,6 +267,49 @@ export function ProposalDetailPage() {
             placeholder="What did the technician find and do on site?"
           />
         </div>
+
+        {isCbreClient && (
+          <div className="rounded-lg border border-line bg-canvas p-3 space-y-3">
+            <p className="text-sm font-bold text-ink">CBRE Rate Card</p>
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-3 items-end">
+              <div>
+                <label className="text-xs font-semibold text-ink-soft">Subtrade</label>
+                <select
+                  value={cbreSubtradeId}
+                  onChange={(e) => setCbreSubtradeId(e.target.value)}
+                  disabled={isLocked}
+                  className="field mt-1"
+                >
+                  <option value="">Select a subtrade…</option>
+                  {cbreRates.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.trade} — {r.subtrade}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-ink-soft">Rate</label>
+                <select
+                  value={cbrePriceTier}
+                  onChange={(e) => setCbrePriceTier(e.target.value as 'reg' | 'ot')}
+                  disabled={isLocked}
+                  className="field mt-1"
+                >
+                  <option value="reg">Regular</option>
+                  <option value="ot">Overtime</option>
+                </select>
+              </div>
+              <Button type="button" onClick={handleApplyCbreRate} disabled={isLocked || !selectedCbreRate}>
+                Apply
+              </Button>
+            </div>
+            <p className="text-xs text-ink-faint">
+              Fills in Technician Rate (CBRE's Standard tier), Helper Rate (their Apprentice tier), and the $65 trip fee below from
+              CBRE's rate card for the selected subtrade and Regular/Overtime -- you can still adjust any of them afterward.
+            </p>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>

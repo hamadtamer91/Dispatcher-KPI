@@ -90,6 +90,24 @@ export interface PartItem {
   updated_at?: string
 }
 
+// CBRE's own rate card: a trade/subtrade combination has three technician
+// tiers (Apprentice, Standard, Master), each with a Regular and an Overtime
+// hourly rate, plus a fixed trip charge. Used to auto-fill the proposal's
+// Technician/Helper rates for CBRE jobs instead of typing them in by hand.
+export interface CbreRateCardRow {
+  id: string
+  trade: string
+  subtrade: string
+  apprentice_rate_reg: number | null
+  apprentice_rate_ot: number | null
+  standard_rate_reg: number | null
+  standard_rate_ot: number | null
+  master_rate_reg: number | null
+  master_rate_ot: number | null
+  trip_charge: number
+  active: boolean
+}
+
 export interface ProposalLineItem {
   id: string
   proposal_id: string
