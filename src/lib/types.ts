@@ -171,6 +171,7 @@ export interface QuoteOutcome {
   proposal_id: string | null
   dispatcher_name: string | null
   client: string | null
+  store: string | null
   trade: string | null
   subtrade: string | null
   job_description: string | null

@@ -520,6 +520,7 @@ export function ProposalDetailPage() {
             recordProposalOutcome(proposal.id, {
               dispatcher_name: proposal.dispatcher_name,
               client: workOrder?.client ?? null,
+              store: null,
               trade: workOrder?.trade ?? null,
               subtrade: workOrder?.subtrade ?? null,
               job_description: workOrder?.description ?? null,

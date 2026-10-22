@@ -15,6 +15,7 @@ const OUTCOME_VARIANT: Record<QuoteOutcomeResult, BadgeVariant> = {
 
 const emptyForm = {
   client: '',
+  store: '',
   trade: '',
   subtrade: '',
   job_description: '',
@@ -57,6 +58,7 @@ export function AiLearningPage() {
         proposal_id: null,
         dispatcher_name: null,
         client: form.client.trim() || null,
+        store: form.store.trim() || null,
         trade: form.trade.trim() || null,
         subtrade: form.subtrade.trim() || null,
         job_description: form.job_description.trim() || null,
@@ -120,8 +122,9 @@ export function AiLearningPage() {
       <div className="panel p-5 space-y-3">
         <h3 className="text-sm font-bold text-ink">Add a past quote</h3>
         {saveErr && <p className="text-sm text-danger">{saveErr}</p>}
-        <div className="grid sm:grid-cols-3 gap-2">
-          <input placeholder="Client / store (optional)" value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} className="field" />
+        <div className="grid sm:grid-cols-4 gap-2">
+          <input placeholder="Client (e.g. CBRE)" value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} className="field" />
+          <input placeholder="Store (optional, e.g. Store #1234)" value={form.store} onChange={(e) => setForm({ ...form, store: e.target.value })} className="field" />
           <input placeholder="Trade (e.g. Plumbing)" value={form.trade} onChange={(e) => setForm({ ...form, trade: e.target.value })} className="field" />
           <input placeholder="Subtrade (optional)" value={form.subtrade} onChange={(e) => setForm({ ...form, subtrade: e.target.value })} className="field" />
         </div>
@@ -168,6 +171,7 @@ export function AiLearningPage() {
             <tr className="table-head-row">
               <th className="px-4 py-3">Source</th>
               <th className="px-4 py-3">Client</th>
+              <th className="px-4 py-3">Store</th>
               <th className="px-4 py-3">Trade</th>
               <th className="px-4 py-3">Job</th>
               <th className="px-4 py-3 text-right">Price</th>
@@ -179,10 +183,10 @@ export function AiLearningPage() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={9} className="text-center text-ink-faint py-6">Loading...</td></tr>
+              <tr><td colSpan={10} className="text-center text-ink-faint py-6">Loading...</td></tr>
             )}
             {!loading && !outcomes.length && (
-              <tr><td colSpan={9} className="text-center text-ink-faint py-6">Nothing labeled yet -- add a past quote above, or label a sent proposal from its own page.</td></tr>
+              <tr><td colSpan={10} className="text-center text-ink-faint py-6">Nothing labeled yet -- add a past quote above, or label a sent proposal from its own page.</td></tr>
             )}
             {outcomes.map((o) => (
               <tr key={o.id} className="table-row">
@@ -196,6 +200,7 @@ export function AiLearningPage() {
                   )}
                 </td>
                 <td className="px-4 py-3">{o.client ?? '—'}</td>
+                <td className="px-4 py-3">{o.store ?? '—'}</td>
                 <td className="px-4 py-3">{[o.trade, o.subtrade].filter(Boolean).join(' / ') || '—'}</td>
                 <td className="px-4 py-3 max-w-[220px] truncate" title={o.job_description ?? ''}>{o.job_description ?? '—'}</td>
                 <td className="px-4 py-3 text-right">{o.total_price != null ? `$${Number(o.total_price).toFixed(2)}` : '—'}</td>
