@@ -160,6 +160,17 @@ export function ProposalDetailPage() {
     }
   }
 
+  // The Assessment Fee always matches the Technician Rate, whatever sets that
+  // rate -- typed in by hand or filled from the CBRE rate card -- so both
+  // places that commit a technician_rate commit a matching assessment_fee
+  // alongside it. The dispatcher can still edit Assessment Fee afterward if a
+  // job needs it to differ.
+  const commitTechnicianRate = () => {
+    const rate = technicianRate.trim() ? Number(technicianRate) : null
+    setAssessmentFee(technicianRate)
+    updateProposal({ technician_rate: rate, assessment_fee: rate })
+  }
+
   const handleApplyCbreRate = async () => {
     if (!selectedCbreRate) return
     const standard = cbrePriceTier === 'ot' ? selectedCbreRate.standard_rate_ot : selectedCbreRate.standard_rate_reg
@@ -170,10 +181,12 @@ export function ProposalDetailPage() {
     setTechnicianRate(nextTechnicianRate)
     setHelperRate(nextHelperRate)
     setTripFee(nextTripFee)
+    setAssessmentFee(nextTechnicianRate)
     await updateProposal({
       technician_rate: standard,
       helper_rate: apprentice,
       trip_fee: selectedCbreRate.trip_charge,
+      assessment_fee: standard,
     })
   }
 
@@ -320,7 +333,7 @@ export function ProposalDetailPage() {
               step="0.01"
               value={technicianRate}
               onChange={(e) => setTechnicianRate(e.target.value)}
-              onBlur={() => updateProposal({ technician_rate: technicianRate.trim() ? Number(technicianRate) : null })}
+              onBlur={commitTechnicianRate}
               disabled={isLocked}
               placeholder="e.g. 45"
               className="field mt-1"
@@ -379,7 +392,8 @@ export function ProposalDetailPage() {
           </div>
           <p className="sm:col-span-2 text-xs text-ink-faint">
             Enter these manually when you're charging a trip or assessment fee. The AI adds them to the proposal as their own line
-            items, billed to the client at exactly what you enter here — no markup.
+            items, billed to the client at exactly what you enter here — no markup. Assessment Fee auto-fills to match Technician Rate
+            whenever that's set (typed in or from the CBRE rate card above) — edit it afterward if this job needs it to differ.
           </p>
         </div>
 
