@@ -59,7 +59,12 @@ export function AiLearningPage() {
     const withPrice = outcomes.filter((o) => o.total_price != null).length
     const withMarkup = outcomes.filter((o) => o.markup_pct != null).length
     const withFeedback = outcomes.filter((o) => o.client_feedback?.trim()).length
-    return { total, withPrice, withMarkup, withFeedback }
+    // A row logged from an in-app proposal automatically carries its real
+    // narrative + line items; a manual entry has none of that structure, so
+    // the AI can only learn scope/parts/labor from the job description text
+    // itself -- a bare trade name with no description gives it nothing.
+    const withDetail = outcomes.filter((o) => o.proposal_id != null || !!o.job_description?.trim()).length
+    return { total, withPrice, withMarkup, withFeedback, withDetail }
   }, [outcomes])
 
   // The AI now calibrates on the TOTAL PRICE that tended to get approved
@@ -241,13 +246,14 @@ export function AiLearningPage() {
 
       <div className="panel p-5 space-y-4">
         <h3 className="text-sm font-bold text-ink">How much of this is actually ready to teach the AI?</h3>
-        <div className="grid sm:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <RatioBar label="Has a price" filled={quality.withPrice} total={quality.total} />
           <RatioBar label="Has a markup %" filled={quality.withMarkup} total={quality.total} />
+          <RatioBar label="Has job detail (scope/parts/labor)" filled={quality.withDetail} total={quality.total} />
           <RatioBar label="Has client feedback" filled={quality.withFeedback} total={quality.total} />
         </div>
         <p className="text-xs text-ink-faint">
-          A row only teaches the AI how to price when it has a real price and markup, not just an approved/rejected label.
+          A row only teaches the AI how to price when it has a real price and markup, not just an approved/rejected label -- and it only teaches the AI what scope/parts/labor that price covered when the job description actually says so, not just a bare trade name.
         </p>
       </div>
 
