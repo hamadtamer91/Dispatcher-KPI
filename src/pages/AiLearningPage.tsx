@@ -35,7 +35,10 @@ export function AiLearningPage() {
   const [parsing, setParsing] = useState(false)
   const [parseErr, setParseErr] = useState('')
   const [parsedNote, setParsedNote] = useState('')
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
+  const [bulkSummary, setBulkSummary] = useState('')
   const formRef = useRef<HTMLDivElement>(null)
+  const bulkStopRef = useRef(false)
 
   const stats = useMemo(() => {
     const total = outcomes.length
@@ -137,6 +140,60 @@ export function AiLearningPage() {
     }
   }
 
+  /** Runs "pull total from pasted text" across every row still missing a
+   *  price, instead of one at a time. Only helps rows whose job description
+   *  actually has the quote's numbers in it (a full pasted breakdown, an
+   *  invoice, etc) -- a bare one-line description like "toilet clog" has no
+   *  total for the AI to find, and is counted separately below. */
+  const handleBulkParse = async () => {
+    const targets = outcomes.filter((o) => o.total_price == null && (o.job_description?.trim() || o.trade?.trim()))
+    if (!targets.length) {
+      setBulkSummary('Every row already has a total price -- nothing to pull.')
+      return
+    }
+    bulkStopRef.current = false
+    setBulkSummary('')
+    let filled = 0
+    let noTotal = 0
+    let failed = 0
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkStopRef.current) break
+      setBulkProgress({ done: i, total: targets.length })
+      const o = targets[i]
+      const text = o.job_description?.trim() || o.trade?.trim() || ''
+      try {
+        const parsed = await parseQuoteText(text)
+        if (parsed.total_price == null) {
+          noTotal++
+        } else {
+          await updateOutcome(o.id, {
+            total_price: parsed.total_price,
+            total_cost: parsed.total_cost ?? o.total_cost,
+            markup_pct: parsed.markup_pct ?? o.markup_pct,
+            trade: o.trade ?? parsed.trade ?? null,
+          })
+          filled++
+        }
+      } catch {
+        failed++
+      }
+      // Brief pause between calls so a run of 40-60 rows doesn't trip
+      // Gemini's rate limit the way a single quick click never would.
+      await new Promise((r) => setTimeout(r, 1200))
+    }
+    setBulkProgress(null)
+    const stopped = bulkStopRef.current
+    setBulkSummary(
+      `${stopped ? 'Stopped early. ' : 'Done. '}Filled in a total for ${filled} row${filled === 1 ? '' : 's'}.` +
+        (noTotal ? ` ${noTotal} had no total in their text.` : '') +
+        (failed ? ` ${failed} failed -- try those again.` : ''),
+    )
+  }
+
+  const handleStopBulk = () => {
+    bulkStopRef.current = true
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -210,6 +267,21 @@ export function AiLearningPage() {
 
       <div className="panel overflow-x-auto">
         {error && <p className="text-sm text-danger p-4">{error}</p>}
+        <div className="flex flex-wrap items-center gap-3 p-4 border-b border-line">
+          {bulkProgress ? (
+            <>
+              <span className="text-sm text-ink-faint">
+                Pulling totals... {bulkProgress.done} / {bulkProgress.total}
+              </span>
+              <Button variant="secondary" onClick={handleStopBulk}>Stop</Button>
+            </>
+          ) : (
+            <Button variant="secondary" icon={<Sparkles size={14} />} onClick={handleBulkParse}>
+              Pull totals for all rows missing a price
+            </Button>
+          )}
+          {!bulkProgress && bulkSummary && <p className="text-sm text-ink-faint">{bulkSummary}</p>}
+        </div>
         <table className="min-w-full text-sm">
           <thead>
             <tr className="table-head-row">
