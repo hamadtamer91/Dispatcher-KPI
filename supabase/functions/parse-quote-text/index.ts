@@ -58,63 +58,91 @@ Extract, as a JSON object:
 - trade: your best guess at the trade category for this job (e.g. Plumbing, Electrical, HVAC, General Maintenance, Flooring, Roofing) based on the work described. Null if you can't tell.
 `.trim()
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-goog-api-key': GEMINI_API_KEY,
-        },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: 512,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: 'OBJECT',
-              properties: {
-                total_price: { type: 'NUMBER', nullable: true },
-                total_cost: { type: 'NUMBER', nullable: true },
-                markup_pct: { type: 'NUMBER', nullable: true },
-                trade: { type: 'STRING', nullable: true },
-              },
-              required: ['total_price'],
-            },
+    // This call is small and fast (a few seconds), so unlike the long
+    // proposal-generation call, it's cheap to retry in-request rather than
+    // making the dispatcher click the button again. Gemini occasionally
+    // (rarely) returns a 503/429, or text that doesn't parse as clean JSON
+    // despite the schema (e.g. wrapped in a markdown code fence) -- one
+    // retry clears almost all of these.
+    const MAX_ATTEMPTS = 2
+    let lastError: { message: string; status: number } | null = null
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-goog-api-key': GEMINI_API_KEY,
           },
-        }),
-      },
-    )
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: {
+              maxOutputTokens: 512,
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: 'OBJECT',
+                properties: {
+                  total_price: { type: 'NUMBER', nullable: true },
+                  total_cost: { type: 'NUMBER', nullable: true },
+                  markup_pct: { type: 'NUMBER', nullable: true },
+                  trade: { type: 'STRING', nullable: true },
+                },
+                required: ['total_price'],
+              },
+            },
+          }),
+        },
+      )
 
-    if (!res.ok) {
-      if (res.status === 429) {
-        return jsonResponse(
-          { error: "Gemini's free-tier rate limit is maxed out right now. Wait about a minute before trying again." },
-          429,
-        )
+      if (!res.ok) {
+        if (res.status === 429) {
+          lastError = {
+            message: "Gemini's free-tier rate limit is maxed out right now. Wait about a minute before trying again.",
+            status: 429,
+          }
+        } else {
+          const errText = await res.text()
+          lastError = { message: `AI parsing failed (${res.status}): ${errText}`, status: 502 }
+        }
+        if (attempt < MAX_ATTEMPTS && (res.status === 429 || res.status === 503)) {
+          await new Promise((r) => setTimeout(r, 1200))
+          continue
+        }
+        break
       }
-      const errText = await res.text()
-      return jsonResponse({ error: `AI parsing failed (${res.status}): ${errText}` }, 502)
+
+      const geminiJson = await res.json()
+      const candidate = geminiJson.candidates?.[0]
+      let rawOut: string = (candidate?.content?.parts ?? [])
+        .map((p: { text?: string }) => p.text ?? '')
+        .join('')
+        .trim()
+
+      if (!rawOut) {
+        lastError = { message: 'The AI did not return a result. Try again.', status: 502 }
+        if (attempt < MAX_ATTEMPTS) continue
+        break
+      }
+
+      // Occasionally the model wraps its JSON in a markdown code fence
+      // despite the schema -- strip that before parsing.
+      rawOut = rawOut.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()
+
+      let parsed: { total_price: number | null; total_cost?: number | null; markup_pct?: number | null; trade?: string | null }
+      try {
+        parsed = JSON.parse(rawOut)
+      } catch {
+        lastError = { message: 'The AI returned malformed JSON. Try again.', status: 502 }
+        if (attempt < MAX_ATTEMPTS) continue
+        break
+      }
+
+      return jsonResponse({ parsed })
     }
 
-    const geminiJson = await res.json()
-    const candidate = geminiJson.candidates?.[0]
-    const rawOut: string = (candidate?.content?.parts ?? [])
-      .map((p: { text?: string }) => p.text ?? '')
-      .join('')
-
-    if (!rawOut) {
-      return jsonResponse({ error: 'The AI did not return a result. Try again.' }, 502)
-    }
-
-    let parsed: { total_price: number | null; total_cost?: number | null; markup_pct?: number | null; trade?: string | null }
-    try {
-      parsed = JSON.parse(rawOut)
-    } catch {
-      return jsonResponse({ error: 'The AI returned malformed JSON. Try again.' }, 502)
-    }
-
-    return jsonResponse({ parsed })
+    return jsonResponse({ error: lastError?.message ?? 'AI parsing failed. Try again.' }, lastError?.status ?? 502)
   } catch (e) {
     return jsonResponse({ error: `Unexpected error: ${(e as Error).message}` }, 500)
   }
