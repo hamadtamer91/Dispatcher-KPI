@@ -27,7 +27,7 @@ const emptyForm = {
 }
 
 export function AiLearningPage() {
-  const { outcomes, loading, error, addOutcome, deleteOutcome, parseQuoteText } = useQuoteOutcomes()
+  const { outcomes, loading, error, addOutcome, updateOutcome, deleteOutcome, parseQuoteText } = useQuoteOutcomes()
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState('')
@@ -189,8 +189,8 @@ export function AiLearningPage() {
               <tr><td colSpan={10} className="text-center text-ink-faint py-6">Nothing labeled yet -- add a past quote above, or label a sent proposal from its own page.</td></tr>
             )}
             {outcomes.map((o) => (
-              <tr key={o.id} className="table-row">
-                <td className="px-4 py-3 text-xs text-ink-faint whitespace-nowrap">
+              <tr key={o.id} className="table-row align-top">
+                <td className="px-3 py-2 text-xs text-ink-faint whitespace-nowrap">
                   {o.proposal_id ? (
                     <Link to={`/proposals/${o.proposal_id}`} className="text-brand-600 hover:underline">
                       In-app
@@ -199,15 +199,84 @@ export function AiLearningPage() {
                     'Manual'
                   )}
                 </td>
-                <td className="px-4 py-3">{o.client ?? '—'}</td>
-                <td className="px-4 py-3">{o.store ?? '—'}</td>
-                <td className="px-4 py-3">{[o.trade, o.subtrade].filter(Boolean).join(' / ') || '—'}</td>
-                <td className="px-4 py-3 max-w-[220px] truncate" title={o.job_description ?? ''}>{o.job_description ?? '—'}</td>
-                <td className="px-4 py-3 text-right">{o.total_price != null ? `$${Number(o.total_price).toFixed(2)}` : '—'}</td>
-                <td className="px-4 py-3 text-right">{o.markup_pct != null ? `${o.markup_pct}%` : '—'}</td>
-                <td className="px-4 py-3"><Badge variant={OUTCOME_VARIANT[o.outcome]}>{QUOTE_OUTCOME_LABELS[o.outcome]}</Badge></td>
-                <td className="px-4 py-3 max-w-[220px] truncate" title={o.client_feedback ?? ''}>{o.client_feedback ?? '—'}</td>
-                <td className="px-4 py-3 text-right">
+                <td className="px-1 py-1">
+                  <input
+                    defaultValue={o.client ?? ''}
+                    onBlur={(e) => e.target.value !== (o.client ?? '') && updateOutcome(o.id, { client: e.target.value.trim() || null })}
+                    placeholder="Client"
+                    className="field-inline w-24"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <input
+                    defaultValue={o.store ?? ''}
+                    onBlur={(e) => e.target.value !== (o.store ?? '') && updateOutcome(o.id, { store: e.target.value.trim() || null })}
+                    placeholder="Store"
+                    className="field-inline w-24"
+                  />
+                </td>
+                <td className="px-1 py-1 space-y-1">
+                  <input
+                    defaultValue={o.trade ?? ''}
+                    onBlur={(e) => e.target.value !== (o.trade ?? '') && updateOutcome(o.id, { trade: e.target.value.trim() || null })}
+                    placeholder="Trade"
+                    className="field-inline w-24"
+                  />
+                  <input
+                    defaultValue={o.subtrade ?? ''}
+                    onBlur={(e) => e.target.value !== (o.subtrade ?? '') && updateOutcome(o.id, { subtrade: e.target.value.trim() || null })}
+                    placeholder="Subtrade"
+                    className="field-inline w-24"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <textarea
+                    defaultValue={o.job_description ?? ''}
+                    onBlur={(e) => e.target.value !== (o.job_description ?? '') && updateOutcome(o.id, { job_description: e.target.value.trim() || null })}
+                    rows={2}
+                    className="field-inline w-56 resize-y"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <input
+                    type="number"
+                    defaultValue={o.total_price ?? ''}
+                    onBlur={(e) => updateOutcome(o.id, { total_price: e.target.value.trim() ? Number(e.target.value) : null })}
+                    placeholder="$"
+                    className="field-inline w-20 text-right"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <input
+                    type="number"
+                    defaultValue={o.markup_pct ?? ''}
+                    onBlur={(e) => updateOutcome(o.id, { markup_pct: e.target.value.trim() ? Number(e.target.value) : null })}
+                    placeholder="%"
+                    className="field-inline w-16 text-right"
+                  />
+                </td>
+                <td className="px-1 py-1">
+                  <select
+                    defaultValue={o.outcome}
+                    onChange={(e) => updateOutcome(o.id, { outcome: e.target.value as QuoteOutcomeResult })}
+                    className="field-inline w-full"
+                  >
+                    {Object.entries(QUOTE_OUTCOME_LABELS).map(([k, label]) => (
+                      <option key={k} value={k}>{label}</option>
+                    ))}
+                  </select>
+                  <Badge variant={OUTCOME_VARIANT[o.outcome]}>{QUOTE_OUTCOME_LABELS[o.outcome]}</Badge>
+                </td>
+                <td className="px-1 py-1">
+                  <textarea
+                    defaultValue={o.client_feedback ?? ''}
+                    onBlur={(e) => e.target.value !== (o.client_feedback ?? '') && updateOutcome(o.id, { client_feedback: e.target.value.trim() || null })}
+                    rows={2}
+                    placeholder="What did the client say?"
+                    className="field-inline w-56 resize-y"
+                  />
+                </td>
+                <td className="px-3 py-2 text-right">
                   <button onClick={() => deleteOutcome(o.id)} className="btn-icon hover:text-danger">
                     <Trash2 size={14} />
                   </button>
