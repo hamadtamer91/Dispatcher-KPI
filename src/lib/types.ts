@@ -137,6 +137,11 @@ export interface Proposal {
   ai_model: string | null
   ai_generated_at: string | null
   ai_raw_response: unknown
+  // Dispatcher-only note from the AI (never shown to the client): set when it
+  // couldn't reasonably reach the flat-quote markup target without inventing
+  // scope, naming a realistic ceiling price and suggesting the technician's
+  // flat quote be negotiated down.
+  ai_pricing_note: string | null
   subtotal_cost: number
   subtotal_price: number
   margin_pct: number | null

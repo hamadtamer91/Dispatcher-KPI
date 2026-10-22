@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, Download, Plus, Send, Sparkles, Trash2, Upload } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, Download, Plus, Send, Sparkles, Trash2, Upload } from 'lucide-react'
 import { useProposalDetail } from '../hooks/useProposalDetail'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { exportProposalDocx } from '../lib/exportProposalDocx'
@@ -347,6 +347,16 @@ export function ProposalDetailPage() {
           </Button>
         )}
       </div>
+
+      {proposal.ai_pricing_note && (
+        <div className="panel p-4 border-l-4 border-l-amber-500 bg-amber-50 flex gap-3">
+          <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-xs font-bold text-amber-800">Pricing note -- for you only, not shown to the client</p>
+            <p className="text-xs text-amber-900">{proposal.ai_pricing_note}</p>
+          </div>
+        </div>
+      )}
 
       <div className="panel p-5 space-y-4">
         <h3 className="text-sm font-bold text-ink">Client-Facing Narrative</h3>
