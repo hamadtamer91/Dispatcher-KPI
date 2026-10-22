@@ -235,7 +235,6 @@ ${lineItemRules}
     const geminiRes = await callGeminiWithRetry(userParts, responseSchema)
 
     if (!geminiRes.ok) {
-      const errText = await geminiRes.text()
       if (geminiRes.status === 429) {
         return jsonResponse(
           { error: "Gemini's free-tier rate limit (a few requests per minute) is maxed out and a retry didn't clear it in time. Wait about a minute before trying again." },
@@ -248,6 +247,16 @@ ${lineItemRules}
           503,
         )
       }
+      if (geminiRes.status === 504) {
+        return jsonResponse(
+          {
+            error:
+              "The AI took too long to respond -- it may be processing several photos, or Gemini is slow right now. Try again, or remove a photo or two and retry.",
+          },
+          504,
+        )
+      }
+      const errText = await geminiRes.text()
       return jsonResponse({ error: `AI generation failed (${geminiRes.status}): ${errText}` }, 502)
     }
 
@@ -477,7 +486,14 @@ ${lineItemRules}
   }
 })
 
-// Two different failure modes here, handled differently:
+// Three failure modes here, handled differently:
+//  - A hung/slow request: Gemini (especially with several photos attached)
+//    can simply take too long. Supabase kills the whole function uncleanly
+//    (an opaque crash, no error of ours to show) if it runs past the
+//    platform's own execution limit, so each attempt gets its own
+//    AbortController timeout well under that ceiling -- that way WE control
+//    the failure and can return a clean, readable error instead of the
+//    platform doing it for us.
 //  - 503 "high demand": shared free-tier capacity hiccup. A short backoff
 //    retry usually clears it.
 //  - 429 "quota exceeded": the free tier allows only a handful of requests
@@ -485,39 +501,55 @@ ${lineItemRules}
 //    window and gets rejected again -- it only helps to wait roughly as long
 //    as Google's own error tells us to (its `retryDelay`), so we do that,
 //    once. Anything else (bad request, auth, daily quota gone) fails fast.
+const GEMINI_ATTEMPT_TIMEOUT_MS = 25000
+
 async function callGeminiWithRetry(userParts: unknown[], responseSchema: unknown): Promise<Response> {
   const maxAttempts = 2
-  let res: Response
+  let res: Response | undefined
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-goog-api-key': GEMINI_API_KEY!,
-        },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: userParts }],
-          generationConfig: {
-            maxOutputTokens: 8192,
-            responseMimeType: 'application/json',
-            responseSchema,
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), GEMINI_ATTEMPT_TIMEOUT_MS)
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-goog-api-key': GEMINI_API_KEY!,
           },
-        }),
-      },
-    )
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: userParts }],
+            generationConfig: {
+              maxOutputTokens: 8192,
+              responseMimeType: 'application/json',
+              responseSchema,
+            },
+          }),
+          signal: controller.signal,
+        },
+      )
+    } catch {
+      // Either the timeout above fired (AbortError) or the connection itself
+      // failed -- either way, retry once if we still can, otherwise give up
+      // cleanly with a 504 the caller turns into a plain-language message.
+      if (attempt === maxAttempts) return new Response(null, { status: 504 })
+      continue
+    } finally {
+      clearTimeout(timer)
+    }
+
     if (res.ok) return res
     if (attempt === maxAttempts) return res
 
     if (res.status === 503) {
       await res.body?.cancel()
-      await new Promise((r) => setTimeout(r, 2500))
+      await new Promise((r) => setTimeout(r, 1500))
       continue
     }
 
     if (res.status === 429) {
-      let delayMs = 15000
+      let delayMs = 8000
       try {
         const errBody = await res.clone().json()
         const retryInfo = (errBody?.error?.details ?? []).find((d: { ['@type']?: string }) =>
@@ -525,7 +557,7 @@ async function callGeminiWithRetry(userParts: unknown[], responseSchema: unknown
         )
         const raw = retryInfo?.retryDelay as string | undefined // e.g. "17s"
         const secs = raw ? parseFloat(raw) : NaN
-        if (!Number.isNaN(secs)) delayMs = Math.min(Math.ceil(secs * 1000) + 500, 25000)
+        if (!Number.isNaN(secs)) delayMs = Math.min(Math.ceil(secs * 1000) + 500, 10000)
       } catch {
         // Couldn't parse it -- fall back to the default delayMs above.
       }
