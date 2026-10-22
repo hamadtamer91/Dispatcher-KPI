@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutGrid, ClipboardList, Users, Building2, LogOut, BarChart3,
-  Map as MapIcon, FileText, Tags, Phone, Menu, X,
+  Map as MapIcon, FileText, Tags, Phone, Menu, X, Sparkles,
 } from 'lucide-react'
 import { useAuth } from './hooks/useAuth'
 import { useLiveCallCount } from './hooks/useLiveCallCount'
@@ -20,9 +20,10 @@ import { ProposalsPage } from './pages/ProposalsPage'
 import { ProposalDetailPage } from './pages/ProposalDetailPage'
 import { PriceListsPage } from './pages/PriceListsPage'
 import { DispatchAgentPage } from './pages/DispatchAgentPage'
+import { AiLearningPage } from './pages/AiLearningPage'
 
-type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'proposals' | 'price_lists' | 'dispatch_agent'
-type DispatcherTab = 'jobs' | 'proposals' | 'price_lists' | 'dispatch_agent'
+type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
+type DispatcherTab = 'jobs' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
 
 interface NavEntry<T extends string> {
   key: T
@@ -94,6 +95,7 @@ export default function App() {
       items: [
         { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
         { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
+        { key: 'ai_learning', label: 'AI Learning', icon: <Sparkles size={17} /> },
       ],
     },
     {
@@ -118,6 +120,7 @@ export default function App() {
         { key: 'jobs', label: 'My Jobs', icon: <ClipboardList size={17} /> },
         { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
         { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
+        { key: 'ai_learning', label: 'AI Learning', icon: <Sparkles size={17} /> },
       ],
     },
     {
@@ -148,6 +151,7 @@ export default function App() {
               <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
             )}
             {dispatcherTab === 'price_lists' && <PriceListsPage />}
+            {dispatcherTab === 'ai_learning' && <AiLearningPage />}
             {dispatcherTab === 'dispatch_agent' && <DispatchAgentPage dispatcherName={profile.dispatcher_name} />}
           </>
         }
@@ -169,6 +173,7 @@ export default function App() {
               <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
             )}
             {tab === 'price_lists' && <PriceListsPage />}
+            {tab === 'ai_learning' && <AiLearningPage />}
             {tab === 'dispatch_agent' && <DispatchAgentPage />}
             {tab === 'users' && profile.role === 'super_admin' && <ManageUsersPage />}
             {tab === 'clients' && profile.role === 'super_admin' && <ClientReportsPage />}

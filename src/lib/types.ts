@@ -152,6 +152,38 @@ export interface Proposal {
   updated_at: string
 }
 
+// ---- AI Learning: labeled quote outcomes (approved/rejected/revision), used
+// as context the AI reads when pricing new proposals, so it can calibrate
+// toward what has actually gotten approved before. Rows can come from a
+// historical quote entered by hand (proposal_id null) or from a proposal
+// that was actually sent through this app (proposal_id set). ----
+
+export type QuoteOutcomeResult = 'approved' | 'rejected' | 'revision_requested'
+
+export const QUOTE_OUTCOME_LABELS: Record<QuoteOutcomeResult, string> = {
+  approved: 'Approved',
+  rejected: 'Rejected',
+  revision_requested: 'Asked to revise / lower price',
+}
+
+export interface QuoteOutcome {
+  id: string
+  proposal_id: string | null
+  dispatcher_name: string | null
+  client: string | null
+  trade: string | null
+  subtrade: string | null
+  job_description: string | null
+  total_price: number | null
+  total_cost: number | null
+  markup_pct: number | null
+  outcome: QuoteOutcomeResult
+  client_feedback: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 // ---- Dispatch Agent ("Raley") activity -- read-only view onto the separate
 // nexafix-dispatch Supabase project, surfaced here via the
 // dispatch-agent-activity edge function. See README for the two-system split. ----

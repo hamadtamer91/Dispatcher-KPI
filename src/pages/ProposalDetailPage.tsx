@@ -3,9 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, CheckCircle2, Download, Plus, Send, Sparkles, Trash2, Upload } from 'lucide-react'
 import { useProposalDetail } from '../hooks/useProposalDetail'
 import { useWorkOrders } from '../hooks/useWorkOrders'
+import { useQuoteOutcomes } from '../hooks/useQuoteOutcomes'
 import { exportProposalDocx } from '../lib/exportProposalDocx'
-import { PROPOSAL_STATUS_LABELS } from '../lib/types'
-import type { LineItemKind, ProposalLineItem, ProposalStatus } from '../lib/types'
+import { PROPOSAL_STATUS_LABELS, QUOTE_OUTCOME_LABELS } from '../lib/types'
+import type { LineItemKind, ProposalLineItem, ProposalStatus, QuoteOutcomeResult } from '../lib/types'
 import { Badge, Button } from '../components/ui'
 import type { BadgeVariant } from '../components/ui'
 
@@ -45,6 +46,7 @@ export function ProposalDetailPage() {
     generateDraft,
   } = useProposalDetail(id)
   const { wos } = useWorkOrders()
+  const { outcomes, recordProposalOutcome } = useQuoteOutcomes()
 
   const [notes, setNotes] = useState('')
   const [technicianRate, setTechnicianRate] = useState('')
@@ -509,6 +511,81 @@ export function ProposalDetailPage() {
             Mark Sent
           </Button>
         )}
+      </div>
+
+      {(proposal.status === 'approved' || proposal.status === 'sent') && (
+        <ClientOutcomePanel
+          existing={outcomes.find((o) => o.proposal_id === proposal.id) ?? null}
+          onSave={(outcome, feedback) =>
+            recordProposalOutcome(proposal.id, {
+              dispatcher_name: proposal.dispatcher_name,
+              client: workOrder?.client ?? null,
+              trade: workOrder?.trade ?? null,
+              subtrade: workOrder?.subtrade ?? null,
+              job_description: workOrder?.description ?? null,
+              total_price: subtotalPrice,
+              total_cost: subtotalCost,
+              markup_pct: Number(proposal.markup_pct) || null,
+              outcome,
+              client_feedback: feedback || null,
+            })
+          }
+        />
+      )}
+    </div>
+  )
+}
+
+function ClientOutcomePanel({
+  existing,
+  onSave,
+}: {
+  existing: { outcome: QuoteOutcomeResult; client_feedback: string | null } | null
+  onSave: (outcome: QuoteOutcomeResult, feedback: string) => Promise<void>
+}) {
+  const [outcome, setOutcome] = useState<QuoteOutcomeResult>(existing?.outcome ?? 'approved')
+  const [feedback, setFeedback] = useState(existing?.client_feedback ?? '')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setOutcome(existing?.outcome ?? 'approved')
+    setFeedback(existing?.client_feedback ?? '')
+  }, [existing?.outcome, existing?.client_feedback])
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaved(false)
+    try {
+      await onSave(outcome, feedback)
+      setSaved(true)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="panel p-4 space-y-2">
+      <h3 className="text-sm font-bold text-ink">What did the client do with this quote?</h3>
+      <p className="text-xs text-ink-faint">
+        This feeds the AI Learning tab -- labeling real outcomes helps future proposals price closer to what actually gets approved.
+      </p>
+      <div className="flex flex-wrap items-end gap-2 pt-1">
+        <select value={outcome} onChange={(e) => setOutcome(e.target.value as QuoteOutcomeResult)} className="field w-56">
+          {Object.entries(QUOTE_OUTCOME_LABELS).map(([k, label]) => (
+            <option key={k} value={k}>{label}</option>
+          ))}
+        </select>
+        <input
+          placeholder="What did the client say? (optional)"
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          className="field flex-1 min-w-[220px]"
+        />
+        <Button variant="secondary" size="sm" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : existing ? 'Update' : 'Save'}
+        </Button>
+        {saved && <span className="text-xs text-good">Saved</span>}
       </div>
     </div>
   )

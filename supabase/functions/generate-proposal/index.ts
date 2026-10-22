@@ -117,6 +117,39 @@ Deno.serve(async (req) => {
       .eq('wo', proposal.wo)
       .maybeSingle()
 
+    // AI Learning: real approved/rejected/revision-requested outcomes the
+    // dispatcher has labeled (old quotes entered by hand, or past proposals
+    // sent from this app), used as context so new proposals calibrate toward
+    // what has actually gotten approved rather than pricing in a vacuum.
+    // Trade-matched history is most relevant; fall back to the broader set
+    // when there isn't much of it yet.
+    let outcomeRows: Array<{
+      trade: string | null
+      total_price: number | null
+      markup_pct: number | null
+      outcome: string
+      client_feedback: string | null
+    }> = []
+    if (workOrder?.trade) {
+      const { data } = await supabase
+        .from('quote_outcomes')
+        .select('trade, total_price, markup_pct, outcome, client_feedback')
+        .ilike('trade', workOrder.trade)
+        .order('created_at', { ascending: false })
+        .limit(30)
+      outcomeRows = data ?? []
+    }
+    if (outcomeRows.length < 4) {
+      // Not enough trade-matched history to say much -- widen to every trade.
+      const { data } = await supabase
+        .from('quote_outcomes')
+        .select('trade, total_price, markup_pct, outcome, client_feedback')
+        .order('created_at', { ascending: false })
+        .limit(30)
+      outcomeRows = data ?? []
+    }
+    const outcomesContext = buildOutcomesContext(outcomeRows, workOrder?.trade ?? null)
+
     const { data: photos } = await supabase
       .from('proposal_photos')
       .select('id, storage_path, caption, sort_order')
@@ -216,7 +249,7 @@ ${proposal.technician_notes}
 ${imageParts.length ? `\n${imageParts.length} technician photo(s) are attached below for visual context.` : ''}
 
 ${modeSection}
-
+${outcomesContext ? `\n${outcomesContext}\n` : ''}
 Write a client-facing proposal draft as a single JSON object matching the required schema. Rules:
 - narrative_scope: 2-4 sentences, written like an experienced facilities estimator, describing what work this job covers in plain, professional language a store manager would understand. Ground it in the specifics from the technician's notes (the actual component, system, and location involved) -- never fall back on generic phrasing like "various issues were addressed" when the notes give you something concrete to say instead.
 - narrative_findings: what the technician found on site -- the specific condition, likely cause, and extent of the issue, explained the way a skilled tech would walk a non-technical client through it. Pull in concrete details actually present in the notes (what was inspected or tested, what had failed, how severe it was) rather than summarizing in the abstract.
@@ -235,7 +268,7 @@ ${lineItemRules}
         pricing_note: {
           type: 'STRING',
           description:
-            'Internal, dispatcher-only note -- never shown to the client. Only set this when a realistic, defensible breakdown genuinely cannot reach the flat-quote markup target without inventing scope; otherwise omit it.',
+            'Internal, dispatcher-only note -- never shown to the client. Set this when a realistic, defensible breakdown genuinely cannot reach the flat-quote markup target without inventing scope, or when the past-outcomes history below suggests this price is likely to get pushed back on; otherwise omit it.',
         },
         line_items: {
           type: 'ARRAY',
@@ -629,6 +662,51 @@ function round2(n: number) {
 // from on these jobs.
 function priceFor(kind: 'labor' | 'part' | 'other', cost: number, markupMult: number): number {
   return round2(kind === 'labor' ? cost : cost * markupMult)
+}
+
+// Turns labeled real-world quote outcomes (AI Learning tab) into a compact
+// prompt paragraph: counts by outcome, the average markup that tended to get
+// approved vs. pushed back on, and a handful of actual client feedback
+// quotes -- the most concrete signal for what tends to get rejected or
+// asked to be revised. Keeps it short on purpose; this supplements the AI's
+// judgment, it isn't meant to dominate the prompt.
+function buildOutcomesContext(
+  rows: Array<{ trade: string | null; total_price: number | null; markup_pct: number | null; outcome: string; client_feedback: string | null }>,
+  tradeFilter: string | null,
+): string {
+  if (!rows.length) return ''
+
+  const approved = rows.filter((r) => r.outcome === 'approved')
+  const pushedBack = rows.filter((r) => r.outcome === 'rejected' || r.outcome === 'revision_requested')
+  const avgMarkup = (set: typeof rows) => {
+    const withMarkup = set.filter((r) => r.markup_pct != null && !Number.isNaN(Number(r.markup_pct)))
+    if (!withMarkup.length) return null
+    return round2(withMarkup.reduce((s, r) => s + Number(r.markup_pct), 0) / withMarkup.length)
+  }
+  const approvedAvgMarkup = avgMarkup(approved)
+  const pushedBackAvgMarkup = avgMarkup(pushedBack)
+
+  const quotes = pushedBack
+    .filter((r) => r.client_feedback && r.client_feedback.trim())
+    .slice(0, 6)
+    .map((r) => {
+      const label = r.outcome === 'rejected' ? 'rejected' : 'asked to revise/lower'
+      const markupNote = r.markup_pct != null ? `, ~${r.markup_pct}% markup` : ''
+      return `  - "${r.client_feedback!.trim().slice(0, 160)}" (${label}${markupNote})`
+    })
+    .join('\n')
+
+  const scopeNote = tradeFilter && rows.some((r) => r.trade?.toLowerCase() === tradeFilter.toLowerCase())
+    ? `for ${tradeFilter} jobs specifically`
+    : 'across jobs generally (not enough history for this specific trade yet)'
+
+  return `
+Real past outcomes to calibrate against (${scopeNote}): of ${rows.length} labeled quotes, ${approved.length} were approved and ${pushedBack.length} were rejected or asked to be revised/lowered.${
+    approvedAvgMarkup != null ? ` Approved quotes averaged about ${approvedAvgMarkup}% markup.` : ''
+  }${pushedBackAvgMarkup != null ? ` Rejected/revision-requested quotes averaged about ${pushedBackAvgMarkup}% markup.` : ''}${
+    quotes ? `\nWhat clients actually said when they pushed back:\n${quotes}` : ''
+  }\nUse this as a sanity check, not a hard rule -- if this job's realistic scope would price well above what's tended to get approved, that's a signal to be more conservative on hours/materials (or flag it via pricing_note) rather than ignore the pattern.
+`.trim()
 }
 
 function guessMediaType(path: string): string {
