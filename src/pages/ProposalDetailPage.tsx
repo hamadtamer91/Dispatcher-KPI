@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, CheckCircle2, Download, Plus, Send, Sparkles, Trash2, Upload } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, Download, Gauge, Plus, Send, Sparkles, Trash2, Upload } from 'lucide-react'
 import { useProposalDetail } from '../hooks/useProposalDetail'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { useQuoteOutcomes } from '../hooks/useQuoteOutcomes'
@@ -380,6 +380,14 @@ export function ProposalDetailPage() {
         </div>
       )}
 
+      {proposal.approval_likelihood_pct != null && (
+        <ApprovalLikelihoodPanel
+          pct={proposal.approval_likelihood_pct}
+          basisN={proposal.approval_likelihood_basis_n}
+          scope={proposal.approval_likelihood_scope}
+        />
+      )}
+
       <div className="panel p-5 space-y-4">
         <h3 className="text-sm font-bold text-ink">Client-Facing Narrative</h3>
         <NarrativeField
@@ -713,5 +721,46 @@ function LineItemRow({
         </td>
       )}
     </tr>
+  )
+}
+
+// Visual read on how this proposal's price has landed historically -- NOT an
+// AI-stated confidence score (language models are poorly calibrated at that).
+// Instead it's the % of the N real, logged AI-Learning outcomes closest in
+// price to this proposal's total that actually got approved -- a plain,
+// explainable stat from the dispatcher's own history, shown as a two-segment
+// split bar so it reads at a glance alongside the price-approval reasoning
+// above it.
+function ApprovalLikelihoodPanel({ pct, basisN, scope }: { pct: number; basisN: number | null; scope: string | null }) {
+  const rejectedPct = 100 - pct
+  return (
+    <div className="panel p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-ink flex items-center gap-2">
+          <Gauge size={16} className="text-ink-faint" />
+          Approval Likelihood
+        </h3>
+        {basisN != null && (
+          <span className="text-xs text-ink-faint">
+            Based on the {basisN} closest-priced past job{basisN === 1 ? '' : 's'}
+          </span>
+        )}
+      </div>
+
+      <div className="flex h-3 rounded-full overflow-hidden bg-canvas">
+        {pct > 0 && <div className="bg-good" style={{ width: `${pct}%` }} />}
+        {rejectedPct > 0 && <div className="bg-danger" style={{ width: `${rejectedPct}%` }} />}
+      </div>
+
+      <div className="flex items-center justify-between text-xs font-bold">
+        <span className="text-good">{pct}% likely approved</span>
+        <span className="text-danger">{rejectedPct}% likely rejected or revised</span>
+      </div>
+
+      <p className="text-xs text-ink-soft">
+        Of the past jobs {scope ?? 'in your AI Learning history'} priced closest to this proposal's total, {pct}% were approved as-is.
+        It's a pattern match against real outcomes, not a guarantee -- use it as one more data point alongside your own judgment.
+      </p>
+    </div>
   )
 }

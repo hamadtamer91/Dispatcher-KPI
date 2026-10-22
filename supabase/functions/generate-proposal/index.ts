@@ -610,6 +610,27 @@ ${lineItemRules}
     const subtotalPrice = (allItems ?? []).reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0)
     const marginPct = subtotalPrice > 0 ? ((subtotalPrice - subtotalCost) / subtotalPrice) * 100 : null
 
+    // Rough "how likely is this to be approved" estimate -- NOT an AI
+    // guess (language models are poorly calibrated at stating their own
+    // confidence as a number). Instead: look at the N real logged outcomes
+    // (within the same client/trade scope already matched above) whose
+    // price was closest to this proposal's total, and report what fraction
+    // of those were actually approved. A real, explainable number from
+    // your own history, not a black box. Needs at least 3 priced outcomes
+    // in scope to say anything -- otherwise there's too little to go on.
+    const pricedOutcomeRows = outcomeRows.filter((r) => r.total_price != null && !Number.isNaN(Number(r.total_price)))
+    let approvalLikelihoodPct: number | null = null
+    let approvalLikelihoodBasisN: number | null = null
+    if (pricedOutcomeRows.length >= 3 && subtotalPrice > 0) {
+      const k = Math.min(10, pricedOutcomeRows.length)
+      const nearest = [...pricedOutcomeRows]
+        .sort((a, b) => Math.abs(Number(a.total_price) - subtotalPrice) - Math.abs(Number(b.total_price) - subtotalPrice))
+        .slice(0, k)
+      const approvedCount = nearest.filter((r) => r.outcome === 'approved').length
+      approvalLikelihoodPct = Math.round((approvedCount / k) * 100)
+      approvalLikelihoodBasisN = k
+    }
+
     const { data: updatedProposal, error: updateErr } = await supabase
       .from('proposals')
       .update({
@@ -624,6 +645,9 @@ ${lineItemRules}
         // regenerate that no longer flags an issue, so a stale warning
         // doesn't linger after the job or quote has changed.
         ai_pricing_note: draft.pricing_note?.trim() || null,
+        approval_likelihood_pct: approvalLikelihoodPct,
+        approval_likelihood_basis_n: approvalLikelihoodBasisN,
+        approval_likelihood_scope: approvalLikelihoodPct != null ? outcomeScopeLabel : null,
         subtotal_cost: round2(subtotalCost),
         subtotal_price: round2(subtotalPrice),
         margin_pct: marginPct === null ? null : round2(marginPct),

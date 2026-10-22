@@ -147,6 +147,14 @@ export interface Proposal {
   // scope, naming a realistic ceiling price and suggesting the technician's
   // flat quote be negotiated down.
   ai_pricing_note: string | null
+  // Rough estimate of how likely this proposal is to be approved as priced,
+  // computed from real AI Learning history (the N logged outcomes whose
+  // price was closest to this proposal's total, within the same
+  // client/trade matching used for pricing) -- not an AI guess. Null when
+  // there wasn't enough priced history to estimate from.
+  approval_likelihood_pct: number | null
+  approval_likelihood_basis_n: number | null
+  approval_likelihood_scope: string | null
   subtotal_cost: number
   subtotal_price: number
   margin_pct: number | null
