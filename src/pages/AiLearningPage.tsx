@@ -62,6 +62,33 @@ export function AiLearningPage() {
     return { total, withPrice, withMarkup, withFeedback }
   }, [outcomes])
 
+  // The AI now calibrates on the TOTAL PRICE that tended to get approved
+  // vs. rejected for a given client+trade (not markup -- the client never
+  // sees that). So "has a price" isn't enough on its own: there needs to
+  // be at least one priced approved outcome AND one priced
+  // rejected/revision-requested outcome for the same client+trade, or the
+  // AI has no actual gap to learn from for that slice, no matter how many
+  // rows exist overall.
+  const priceGapCoverage = useMemo(() => {
+    type Group = { client: string; trade: string; total: number; approvedPriced: number; pushedBackPriced: number }
+    const groups = new Map<string, Group>()
+    for (const o of outcomes) {
+      const client = o.client?.trim() || 'Unknown client'
+      const trade = o.trade?.trim() || 'Unknown trade'
+      const key = `${client} / ${trade}`
+      const g = groups.get(key) ?? { client, trade, total: 0, approvedPriced: 0, pushedBackPriced: 0 }
+      g.total++
+      if (o.total_price != null) {
+        if (o.outcome === 'approved') g.approvedPriced++
+        else g.pushedBackPriced++
+      }
+      groups.set(key, g)
+    }
+    const rows = Array.from(groups.values()).sort((a, b) => b.total - a.total)
+    const withGap = rows.filter((r) => r.approvedPriced > 0 && r.pushedBackPriced > 0).length
+    return { rows, withGap, total: rows.length }
+  }, [outcomes])
+
   const handleSave = async () => {
     if (!form.job_description.trim() && !form.trade.trim()) {
       setSaveErr('Add at least a trade or a short description of the job.')
@@ -222,6 +249,56 @@ export function AiLearningPage() {
         <p className="text-xs text-ink-faint">
           A row only teaches the AI how to price when it has a real price and markup, not just an approved/rejected label.
         </p>
+      </div>
+
+      <div className="panel p-5 space-y-4">
+        <div>
+          <h3 className="text-sm font-bold text-ink">Price-gap coverage by client &amp; trade</h3>
+          <p className="text-xs text-ink-faint mt-1">
+            The AI now calibrates on the total price that tended to get approved vs. rejected for a client+trade -- not on markup, since the client never sees that. Each group below needs at least one priced approved quote AND one priced rejected/revised quote to actually give the AI a gap to learn from.
+          </p>
+        </div>
+        <RatioBar label="Client + trade groups with a real price gap" filled={priceGapCoverage.withGap} total={priceGapCoverage.total} />
+        {priceGapCoverage.rows.length > 0 && (
+          <div className="overflow-x-auto -mx-5 px-5">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="table-head-row">
+                  <th className="px-3 py-2">Client</th>
+                  <th className="px-3 py-2">Trade</th>
+                  <th className="px-3 py-2 text-right">Rows</th>
+                  <th className="px-3 py-2 text-right">Priced approved</th>
+                  <th className="px-3 py-2 text-right">Priced rejected/revised</th>
+                  <th className="px-3 py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {priceGapCoverage.rows.map((r) => {
+                  const hasGap = r.approvedPriced > 0 && r.pushedBackPriced > 0
+                  const oneSided = !hasGap && (r.approvedPriced > 0 || r.pushedBackPriced > 0)
+                  return (
+                    <tr key={`${r.client}/${r.trade}`} className="table-row">
+                      <td className="px-3 py-2">{r.client}</td>
+                      <td className="px-3 py-2">{r.trade}</td>
+                      <td className="px-3 py-2 text-right">{r.total}</td>
+                      <td className="px-3 py-2 text-right">{r.approvedPriced}</td>
+                      <td className="px-3 py-2 text-right">{r.pushedBackPriced}</td>
+                      <td className="px-3 py-2">
+                        {hasGap ? (
+                          <Badge variant="good">Has a price gap</Badge>
+                        ) : oneSided ? (
+                          <Badge variant="warn">Needs a priced {r.approvedPriced > 0 ? 'rejected/revised' : 'approved'} example</Badge>
+                        ) : (
+                          <Badge variant="danger">No priced data yet</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
