@@ -132,13 +132,15 @@ Deno.serve(async (req) => {
       markup_pct: number | null
       outcome: string
       client_feedback: string | null
+      job_description: string | null
+      proposal_id: string | null
     }
     const outcomeClientName = proposal.client_name ?? workOrder?.client ?? null
     const outcomeTradeName = workOrder?.trade ?? null
     const fetchOutcomes = async (filters: { client?: string; trade?: string }): Promise<OutcomeRow[]> => {
       let q = supabase
         .from('quote_outcomes')
-        .select('trade, client, total_price, markup_pct, outcome, client_feedback')
+        .select('trade, client, total_price, markup_pct, outcome, client_feedback, job_description, proposal_id')
         .order('created_at', { ascending: false })
         .limit(30)
       if (filters.client) q = q.ilike('client', filters.client)
@@ -175,7 +177,72 @@ Deno.serve(async (req) => {
           : outcomeScope === 'trade'
             ? `for ${outcomeTradeName} jobs generally (not enough history for ${outcomeClientName ?? 'this client'} specifically)`
             : 'across jobs generally (not enough labeled history yet)'
-    const outcomesContext = buildOutcomesContext(outcomeRows, outcomeScopeLabel)
+
+    // Outcomes logged from an actual in-app proposal (proposal_id set) have
+    // far richer history than a manual entry's short job_description -- the
+    // real narrative that was sent to the client, plus the actual line-item
+    // breakdown (how many hours of Technician vs. Helper, which parts). Pull
+    // that in so the AI can match a new job's scope/complexity to what level
+    // of scope has tended to get approved at what price, not just a bare
+    // number. A manual entry has none of that structure, so its pasted
+    // job_description text (which often already is a full quote breakdown)
+    // is used as-is instead.
+    const linkedProposalIds = [...new Set(outcomeRows.map((r) => r.proposal_id).filter((id): id is string => !!id))]
+    const detailByProposalId = new Map<string, string>()
+    if (linkedProposalIds.length) {
+      const { data: linkedProposals } = await supabase
+        .from('proposals')
+        .select('id, narrative_recommendation, technician_rate, helper_rate')
+        .in('id', linkedProposalIds)
+      const { data: linkedLineItems } = await supabase
+        .from('proposal_line_items')
+        .select('proposal_id, kind, description, quantity, unit_cost, labor_rates(role_name), parts_price_list(name)')
+        .in('proposal_id', linkedProposalIds)
+
+      const itemsByProposal = new Map<string, typeof linkedLineItems>()
+      for (const li of linkedLineItems ?? []) {
+        const list = itemsByProposal.get(li.proposal_id) ?? []
+        list.push(li)
+        itemsByProposal.set(li.proposal_id, list)
+      }
+
+      for (const p of linkedProposals ?? []) {
+        const items = itemsByProposal.get(p.id) ?? []
+        const closeTo = (a: number | null, b: number | null) => a != null && b != null && Math.abs(a - b) < 0.005
+
+        const laborHoursByRole = new Map<string, number>()
+        const partLabels: string[] = []
+        for (const li of items) {
+          if (li.kind === 'labor') {
+            const roleName =
+              (li as { labor_rates?: { role_name: string } | null }).labor_rates?.role_name ??
+              (closeTo(li.unit_cost, p.technician_rate) ? 'Technician' : closeTo(li.unit_cost, p.helper_rate) ? 'Helper' : 'Labor')
+            laborHoursByRole.set(roleName, (laborHoursByRole.get(roleName) ?? 0) + Number(li.quantity))
+          } else if (li.kind === 'part') {
+            const partName = (li as { parts_price_list?: { name: string } | null }).parts_price_list?.name ?? li.description
+            partLabels.push(li.quantity > 1 ? `${partName} x${li.quantity}` : partName)
+          }
+        }
+        const laborSummary = [...laborHoursByRole.entries()].map(([role, hrs]) => `${role} ${round2(hrs)}hr${hrs === 1 ? '' : 's'}`).join(', ')
+        const partsSummary = partLabels.slice(0, 10).join(', ')
+
+        const detail = [
+          p.narrative_recommendation?.trim() || null,
+          laborSummary ? `Labor: ${laborSummary}` : null,
+          partsSummary ? `Parts: ${partsSummary}` : null,
+        ]
+          .filter(Boolean)
+          .join(' -- ')
+        if (detail) detailByProposalId.set(p.id, detail)
+      }
+    }
+
+    const outcomeRowsWithDetail = outcomeRows.map((r) => ({
+      ...r,
+      detail: (r.proposal_id ? detailByProposalId.get(r.proposal_id) : null) ?? r.job_description ?? null,
+    }))
+
+    const outcomesContext = buildOutcomesContext(outcomeRowsWithDetail, outcomeScopeLabel)
 
     const { data: photos } = await supabase
       .from('proposal_photos')
@@ -697,12 +764,24 @@ function priceFor(kind: 'labor' | 'part' | 'other', cost: number, markupMult: nu
 // is driven by that bottom-line number, not by what margin we built into
 // it. This leads with the total-price range that tended to get approved
 // vs. pushed back (the client-facing signal), with markup kept only as
-// secondary, internal-reference context, plus a handful of actual client
-// feedback quotes -- the most concrete signal for what tends to get
-// rejected or asked to be revised. Keeps it short on purpose; this
+// secondary, internal-reference context, then a handful of concrete past
+// jobs (the real scope/narrative, parts used, and Technician/Helper hours
+// for an in-app proposal, or the pasted job_description text for a manual
+// entry) so the AI can match a new job's complexity to what level of
+// complexity has tended to get approved at what price -- and finally
+// actual client feedback quotes, the most concrete signal for what tends
+// to get rejected or asked to be revised. Keeps it short on purpose; this
 // supplements the AI's judgment, it isn't meant to dominate the prompt.
 function buildOutcomesContext(
-  rows: Array<{ trade: string | null; client: string | null; total_price: number | null; markup_pct: number | null; outcome: string; client_feedback: string | null }>,
+  rows: Array<{
+    trade: string | null
+    client: string | null
+    total_price: number | null
+    markup_pct: number | null
+    outcome: string
+    client_feedback: string | null
+    detail?: string | null
+  }>,
   scopeLabel: string,
 ): string {
   if (!rows.length) return ''
@@ -732,6 +811,18 @@ function buildOutcomesContext(
   const approvedAvgMarkup = avgMarkup(approved)
   const pushedBackAvgMarkup = avgMarkup(pushedBack)
 
+  // A handful of concrete past jobs -- real scope/narrative, parts, and
+  // labor hours -- so the AI can judge complexity, not just read a price.
+  const jobExamples = (set: typeof rows, label: string) =>
+    set
+      .filter((r) => r.detail && r.detail.trim())
+      .slice(0, 3)
+      .map((r) => {
+        const priceNote = r.total_price != null ? `$${r.total_price}` : 'no price logged'
+        return `  - [${label}, ${priceNote}] ${r.detail!.trim().slice(0, 240)}`
+      })
+  const examples = [...jobExamples(approved, 'Approved'), ...jobExamples(pushedBack, 'Rejected/revised')].join('\n')
+
   const quotes = pushedBack
     .filter((r) => r.client_feedback && r.client_feedback.trim())
     .slice(0, 6)
@@ -752,6 +843,8 @@ IMPORTANT: the client only ever sees the final total price on the proposal -- ne
     approvedAvgMarkup != null || pushedBackAvgMarkup != null
       ? ` (Internal reference only, not the client-facing signal: approved markup averaged ${approvedAvgMarkup ?? 'n/a'}%, rejected/revision markup averaged ${pushedBackAvgMarkup ?? 'n/a'}%.)`
       : ''
+  }${
+    examples ? `\nWhat past jobs like this actually involved (scope, parts, Technician/Helper hours) -- use this to judge how much scope/complexity has tended to earn which price, not just the bare number:\n${examples}` : ''
   }${
     quotes ? `\nWhat clients actually said when they pushed back:\n${quotes}` : ''
   }\nUse this as a sanity check, not a hard rule -- if this job's realistic total would land at or above where this client/trade has tended to get rejected, that's a signal to be more conservative on hours/materials (or flag it via pricing_note) so the total lands closer to what's actually tended to get approved, rather than chasing a markup % the client never sees.
