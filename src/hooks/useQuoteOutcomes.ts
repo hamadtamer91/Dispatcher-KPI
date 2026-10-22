@@ -82,5 +82,47 @@ export function useQuoteOutcomes() {
     [outcomes, addOutcome, updateOutcome],
   )
 
-  return { outcomes, loading, error, refresh, addOutcome, updateOutcome, deleteOutcome, recordProposalOutcome }
+  /** Pastes a raw old quote/proposal breakdown (whatever format it's in)
+   *  through the AI so the dispatcher doesn't have to retype the total by
+   *  hand -- returns whatever fields it could confidently pull out
+   *  (total_price, and total_cost/markup_pct/trade only when the text
+   *  actually supports them). Caller decides how to merge these into the
+   *  form; nothing is saved here. */
+  const parseQuoteText = useCallback(async (rawText: string) => {
+    const { data, error: err } = await supabase.functions.invoke('parse-quote-text', {
+      body: { raw_text: rawText },
+    })
+    if (err) {
+      let message = err.message
+      try {
+        const ctx = (err as unknown as { context?: Response }).context
+        if (ctx) {
+          const body = await ctx.clone().json()
+          if (body?.error) message = body.error
+        }
+      } catch {
+        // fall back to err.message
+      }
+      throw new Error(message)
+    }
+    if (data?.error) throw new Error(data.error)
+    return data.parsed as {
+      total_price: number | null
+      total_cost?: number | null
+      markup_pct?: number | null
+      trade?: string | null
+    }
+  }, [])
+
+  return {
+    outcomes,
+    loading,
+    error,
+    refresh,
+    addOutcome,
+    updateOutcome,
+    deleteOutcome,
+    recordProposalOutcome,
+    parseQuoteText,
+  }
 }

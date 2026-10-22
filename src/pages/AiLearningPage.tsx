@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Sparkles } from 'lucide-react'
 import { useQuoteOutcomes } from '../hooks/useQuoteOutcomes'
 import { QUOTE_OUTCOME_LABELS } from '../lib/types'
 import type { QuoteOutcomeResult } from '../lib/types'
@@ -26,10 +26,13 @@ const emptyForm = {
 }
 
 export function AiLearningPage() {
-  const { outcomes, loading, error, addOutcome, deleteOutcome } = useQuoteOutcomes()
+  const { outcomes, loading, error, addOutcome, deleteOutcome, parseQuoteText } = useQuoteOutcomes()
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState('')
+  const [parsing, setParsing] = useState(false)
+  const [parseErr, setParseErr] = useState('')
+  const [parsedNote, setParsedNote] = useState('')
 
   const stats = useMemo(() => {
     const total = outcomes.length
@@ -71,6 +74,35 @@ export function AiLearningPage() {
     }
   }
 
+  const handleParse = async () => {
+    if (!form.job_description.trim()) {
+      setParseErr('Paste the quote text into the job box above first.')
+      return
+    }
+    setParsing(true)
+    setParseErr('')
+    setParsedNote('')
+    try {
+      const parsed = await parseQuoteText(form.job_description)
+      if (parsed.total_price == null) {
+        setParseErr("Couldn't find a total in that text -- enter the price manually.")
+        return
+      }
+      setForm((f) => ({
+        ...f,
+        total_price: String(parsed.total_price),
+        total_cost: parsed.total_cost != null ? String(parsed.total_cost) : f.total_cost,
+        markup_pct: parsed.markup_pct != null ? String(parsed.markup_pct) : f.markup_pct,
+        trade: f.trade.trim() ? f.trade : parsed.trade ?? f.trade,
+      }))
+      setParsedNote(`Found total: $${Number(parsed.total_price).toFixed(2)} -- review below before saving.`)
+    } catch (e) {
+      setParseErr((e as Error).message)
+    } finally {
+      setParsing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -94,11 +126,18 @@ export function AiLearningPage() {
           <input placeholder="Subtrade (optional)" value={form.subtrade} onChange={(e) => setForm({ ...form, subtrade: e.target.value })} className="field" />
         </div>
         <textarea
-          placeholder="What was the job? (short description of scope/work done)"
+          placeholder="What was the job? Paste the full quote/breakdown text here if you have it (trip fee, labor, parts, grand total, etc) -- or just a short description."
           value={form.job_description}
           onChange={(e) => setForm({ ...form, job_description: e.target.value })}
-          className="field w-full min-h-[70px]"
+          className="field w-full min-h-[110px]"
         />
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" icon={<Sparkles size={14} />} onClick={handleParse} disabled={parsing}>
+            {parsing ? 'Reading...' : 'Pull total from pasted text'}
+          </Button>
+          {parseErr && <p className="text-sm text-danger">{parseErr}</p>}
+          {!parseErr && parsedNote && <p className="text-sm text-good">{parsedNote}</p>}
+        </div>
         <div className="grid sm:grid-cols-4 gap-2">
           <input placeholder="Total price quoted $" type="number" value={form.total_price} onChange={(e) => setForm({ ...form, total_price: e.target.value })} className="field" />
           <input placeholder="Cost (optional) $" type="number" value={form.total_cost} onChange={(e) => setForm({ ...form, total_cost: e.target.value })} className="field" />
