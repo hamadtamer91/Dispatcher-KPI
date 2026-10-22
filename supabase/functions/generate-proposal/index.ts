@@ -692,11 +692,15 @@ function priceFor(kind: 'labor' | 'part' | 'other', cost: number, markupMult: nu
 }
 
 // Turns labeled real-world quote outcomes (AI Learning tab) into a compact
-// prompt paragraph: counts by outcome, the average markup that tended to get
-// approved vs. pushed back on, and a handful of actual client feedback
-// quotes -- the most concrete signal for what tends to get rejected or
-// asked to be revised. Keeps it short on purpose; this supplements the AI's
-// judgment, it isn't meant to dominate the prompt.
+// prompt paragraph. The client only ever sees the total price on a
+// proposal -- never our cost or markup -- so their approve/reject decision
+// is driven by that bottom-line number, not by what margin we built into
+// it. This leads with the total-price range that tended to get approved
+// vs. pushed back (the client-facing signal), with markup kept only as
+// secondary, internal-reference context, plus a handful of actual client
+// feedback quotes -- the most concrete signal for what tends to get
+// rejected or asked to be revised. Keeps it short on purpose; this
+// supplements the AI's judgment, it isn't meant to dominate the prompt.
 function buildOutcomesContext(
   rows: Array<{ trade: string | null; client: string | null; total_price: number | null; markup_pct: number | null; outcome: string; client_feedback: string | null }>,
   scopeLabel: string,
@@ -705,6 +709,21 @@ function buildOutcomesContext(
 
   const approved = rows.filter((r) => r.outcome === 'approved')
   const pushedBack = rows.filter((r) => r.outcome === 'rejected' || r.outcome === 'revision_requested')
+
+  const priceStats = (set: typeof rows) => {
+    const priced = set.filter((r) => r.total_price != null && !Number.isNaN(Number(r.total_price)))
+    if (!priced.length) return null
+    const prices = priced.map((r) => Number(r.total_price))
+    return {
+      avg: round2(prices.reduce((s, p) => s + p, 0) / prices.length),
+      min: round2(Math.min(...prices)),
+      max: round2(Math.max(...prices)),
+      n: priced.length,
+    }
+  }
+  const approvedPrice = priceStats(approved)
+  const pushedBackPrice = priceStats(pushedBack)
+
   const avgMarkup = (set: typeof rows) => {
     const withMarkup = set.filter((r) => r.markup_pct != null && !Number.isNaN(Number(r.markup_pct)))
     if (!withMarkup.length) return null
@@ -718,17 +737,24 @@ function buildOutcomesContext(
     .slice(0, 6)
     .map((r) => {
       const label = r.outcome === 'rejected' ? 'rejected' : 'asked to revise/lower'
-      const markupNote = r.markup_pct != null ? `, ~${r.markup_pct}% markup` : ''
-      return `  - "${r.client_feedback!.trim().slice(0, 160)}" (${label}${markupNote})`
+      const priceNote = r.total_price != null ? `, total was $${r.total_price}` : ''
+      return `  - "${r.client_feedback!.trim().slice(0, 160)}" (${label}${priceNote})`
     })
     .join('\n')
 
   return `
-Real past outcomes to calibrate against (${scopeLabel}): of ${rows.length} labeled quotes, ${approved.length} were approved and ${pushedBack.length} were rejected or asked to be revised/lowered.${
-    approvedAvgMarkup != null ? ` Approved quotes averaged about ${approvedAvgMarkup}% markup.` : ''
-  }${pushedBackAvgMarkup != null ? ` Rejected/revision-requested quotes averaged about ${pushedBackAvgMarkup}% markup.` : ''}${
+Real past outcomes to calibrate against (${scopeLabel}): of ${rows.length} labeled quotes, ${approved.length} were approved and ${pushedBack.length} were rejected or asked to be revised/lowered.
+IMPORTANT: the client only ever sees the final total price on the proposal -- never our cost or markup behind it -- so their decision is a reaction to that one number. Treat the price ranges below as the real signal for what this client/trade tends to accept; the markup figures are internal reference only and should not drive your pricing decision.${
+    approvedPrice ? ` Approved totals averaged $${approvedPrice.avg} (range $${approvedPrice.min}-$${approvedPrice.max}, n=${approvedPrice.n}).` : ''
+  }${
+    pushedBackPrice ? ` Rejected/revision-requested totals averaged $${pushedBackPrice.avg} (range $${pushedBackPrice.min}-$${pushedBackPrice.max}, n=${pushedBackPrice.n}).` : ''
+  }${
+    approvedAvgMarkup != null || pushedBackAvgMarkup != null
+      ? ` (Internal reference only, not the client-facing signal: approved markup averaged ${approvedAvgMarkup ?? 'n/a'}%, rejected/revision markup averaged ${pushedBackAvgMarkup ?? 'n/a'}%.)`
+      : ''
+  }${
     quotes ? `\nWhat clients actually said when they pushed back:\n${quotes}` : ''
-  }\nUse this as a sanity check, not a hard rule -- if this job's realistic scope would price well above what's tended to get approved, that's a signal to be more conservative on hours/materials (or flag it via pricing_note) rather than ignore the pattern.
+  }\nUse this as a sanity check, not a hard rule -- if this job's realistic total would land at or above where this client/trade has tended to get rejected, that's a signal to be more conservative on hours/materials (or flag it via pricing_note) so the total lands closer to what's actually tended to get approved, rather than chasing a markup % the client never sees.
 `.trim()
 }
 
