@@ -51,6 +51,17 @@ export function AiLearningPage() {
     }
   }, [outcomes])
 
+  // How much of what's logged actually has the detail the AI needs to
+  // calibrate pricing (a price, a markup %, and what the client said) --
+  // not just a trade and a yes/no outcome.
+  const quality = useMemo(() => {
+    const total = outcomes.length
+    const withPrice = outcomes.filter((o) => o.total_price != null).length
+    const withMarkup = outcomes.filter((o) => o.markup_pct != null).length
+    const withFeedback = outcomes.filter((o) => o.client_feedback?.trim()).length
+    return { total, withPrice, withMarkup, withFeedback }
+  }, [outcomes])
+
   const handleSave = async () => {
     if (!form.job_description.trim() && !form.trade.trim()) {
       setSaveErr('Add at least a trade or a short description of the job.')
@@ -200,6 +211,18 @@ export function AiLearningPage() {
         title="AI Learning"
         description="Feed the AI real outcomes -- old quotes and sent proposals, labeled with what the client actually did -- so new proposals price closer to what tends to get approved. Proposals sent from this app can be labeled directly on their own page; use the form below for quotes from before this system, or ones done outside it."
       />
+
+      <div className="panel p-5 space-y-4">
+        <h3 className="text-sm font-bold text-ink">How much of this is actually ready to teach the AI?</h3>
+        <div className="grid sm:grid-cols-3 gap-4">
+          <RatioBar label="Has a price" filled={quality.withPrice} total={quality.total} />
+          <RatioBar label="Has a markup %" filled={quality.withMarkup} total={quality.total} />
+          <RatioBar label="Has client feedback" filled={quality.withFeedback} total={quality.total} />
+        </div>
+        <p className="text-xs text-ink-faint">
+          A row only teaches the AI how to price when it has a real price and markup, not just an approved/rejected label.
+        </p>
+      </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard label="Total labeled" value={stats.total} />
@@ -355,6 +378,24 @@ function StatCard({ label, value, variant }: { label: string; value: number; var
       <p className={`text-2xl font-bold mt-1 ${variant === 'good' ? 'text-good' : variant === 'danger' ? 'text-danger' : variant === 'warn' ? 'text-warn' : 'text-ink'}`}>
         {value}
       </p>
+    </div>
+  )
+}
+
+function RatioBar({ label, filled, total }: { label: string; filled: number; total: number }) {
+  const pct = total ? Math.round((filled / total) * 100) : 0
+  const barColor = pct >= 70 ? 'bg-good' : pct >= 30 ? 'bg-warn' : 'bg-danger'
+  const textColor = pct >= 70 ? 'text-good' : pct >= 30 ? 'text-warn' : 'text-danger'
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1.5">
+        <span className="text-sm text-ink-soft">{label}</span>
+        <span className={`text-sm font-bold ${textColor}`}>{pct}%</span>
+      </div>
+      <div className="h-2 rounded-full bg-canvas overflow-hidden">
+        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+      </div>
+      <p className="text-xs text-ink-faint mt-1">{filled} of {total} rows</p>
     </div>
   )
 }
