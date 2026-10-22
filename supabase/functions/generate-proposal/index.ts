@@ -288,24 +288,19 @@ Deno.serve(async (req) => {
         .map((p: Part) => `- ${p.name}${p.sku ? ` (SKU ${p.sku})` : ''}${p.category ? ` [${p.category}]` : ''}`)
         .join('\n') || '(none configured yet)'
 
-    const markupPctNum = Number(proposal.markup_pct) || 0
-    // The dispatcher's full markup (labor + parts + fees together, not just
-    // parts) is earned on the technician's flat cost -- e.g. cost $100 at
-    // 75% markup means the WHOLE client bill, trip fee and assessment fee
-    // included, should land around $175, not $175 plus fees on top.
-    const flatQuoteTarget = round2(flatQuote! * (1 + markupPctNum / 100))
-    // Trip fee and assessment fee are billed to the client at cost (no
-    // markup) and get appended as their own line items after the AI call --
-    // so they already eat into that $175, leaving this much for the AI's own
-    // labor/parts breakdown to cover. Never let the fees alone push this
-    // below the technician's actual flat cost.
-    const laborPartsTarget = round2(Math.max(flatQuoteTarget - tripFee - assessmentFee, flatQuote!))
-    const feesNote =
-      tripFee > 0 || assessmentFee > 0
-        ? ` Separately, the client is also being billed a $${round2(tripFee + assessmentFee)} fee (trip/assessment, billed at cost with no markup) that is NOT part of your line items -- it's already counted against the $${flatQuoteTarget} target above, which is why your own labor/parts breakdown should aim for about $${laborPartsTarget} instead of the full $${flatQuoteTarget}.`
-        : ''
+    // IMPORTANT: a technician's flat all-in ask is NOT a pricing target.
+    // Clients never see or care what we pay the technician -- they only ever
+    // see the final proposal total, and that total has to be defensible on
+    // its own, realistic terms. If the proposal were instead reverse-priced
+    // to reconcile with whatever the technician asked for, an inflated ask
+    // (or a dispatcher testing a number) would blow up every line item into
+    // nonsense (e.g. a $25,000 wall panel) and produce a client-facing total
+    // no one would ever approve. So the technician's flat quote is only ever
+    // used AFTER pricing, as a separate dispatcher-facing comparison (see the
+    // pricing-note block near the DB update below) -- never to size or scale
+    // the line items themselves.
     const flatQuoteContext = isFlatQuoteMode
-      ? `Context: the technician gave the dispatcher one flat all-in price of $${flatQuote} for this entire job (covering labor and any parts/materials together) -- that is the fixed amount the dispatcher will actually pay him, no matter how the hours/parts break down. The dispatcher's markup for this job is ${markupPctNum}%, applied against that whole $${flatQuote} -- so the ENTIRE client-facing proposal (labor + parts + any fees) should come out to roughly $${flatQuoteTarget} once priced.${feesNote} Since what the technician is paid doesn't change based on the hours you itemize, the hours of Technician/Helper time (and whether a helper is genuinely warranted) are, together with the parts/materials, what earns that margin here -- size a realistic, defensible breakdown that a real job like this could plausibly need, spread across labor and materials together rather than loading it all onto parts alone, aiming for about $${laborPartsTarget} from labor + parts combined. Price each part/material at its genuine, realistic market cost before markup -- never inflate a part's suggested_unit_cost just to help reach the number; the margin should come from a realistic scope, not inflated unit prices. "Reasonable and defensible" is the ceiling, though -- never invent scope the notes don't support just to reach the dollar figure.\n\nIf, even with the most generous breakdown you can honestly defend for this job, you can't reasonably get close to $${laborPartsTarget} without inventing scope the notes don't support, don't force it -- size the most generous breakdown you can still defend, and instead fill the pricing_note field with a short, dispatcher-facing note (the client never sees this) naming the realistic ceiling price for this job as you've priced it and recommending the technician's $${flatQuote} flat quote be negotiated down, since there's no reasonable way to bill the client more than that for this scope of work. Leave pricing_note out entirely if your breakdown already lands at or near the target.\n\n`
+      ? `Context: the technician separately told the dispatcher he wants to be paid $${flatQuote} as one flat amount for his own time and effort on this job. This is an internal cost conversation between the dispatcher and the technician -- it is NOT a pricing target, and it must have zero influence on your line items or totals. Price this job exactly the way you would any other: estimate the hours it genuinely needs at the Technician/Helper rates below, and price every part/material at its real, honest, typical U.S. market cost -- never inflated, deflated, or nudged toward any dollar figure to make the total land anywhere in particular. The system will separately show the dispatcher how the technician's $${flatQuote} ask compares to your realistic pricing, so you don't need to reconcile the two.\n\n`
       : ''
 
     const modeSection = `
@@ -366,7 +361,7 @@ ${lineItemRules}
         pricing_note: {
           type: 'STRING',
           description:
-            'Internal, dispatcher-only note -- never shown to the client. Set this when a realistic, defensible breakdown genuinely cannot reach the flat-quote markup target without inventing scope, or when the past-outcomes history below suggests this price is likely to get pushed back on; otherwise omit it.',
+            'Internal, dispatcher-only note -- never shown to the client. Set this when the past-outcomes history below suggests this price is likely to get pushed back on; otherwise omit it. (Do not use this to comment on the technician\'s flat-quote ask -- the system adds that comparison separately.)',
         },
         line_items: {
           type: 'ARRAY',
@@ -503,61 +498,17 @@ ${lineItemRules}
       }
     })
 
-    // In flat-quote mode the technician is paid ONE fixed amount no matter
-    // how the job breaks down into hours and parts -- so that flat $ figure
-    // IS the whole real cost of the job; it isn't actually split into
-    // "labor cost" vs "parts cost" the way an hourly job's cost is. The
-    // itemized hours/helper/parts breakdown below exists to explain and bill
-    // the job to the client, not to reflect what's paid out line by line --
-    // so every line's COST is allocated proportionally (from the natural,
-    // unscaled estimate above) purely so the lines reconcile back to exactly
-    // the technician's flat $ ask.
-    // PRICE is never tied to that cost allocation: labor still prices at
-    // hours x the agreed Technician/Helper rate (never marked up, exactly
-    // like an hourly job -- the rate itself never moves), and parts/other
-    // price at their allocated cost x markup. Because the flat payout doesn't
-    // change no matter how many hours/parts are itemized, a fuller, still-
-    // reasonable breakdown (see the guidance above) directly raises the price
-    // -- and with it the margin -- which is how this mode earns margin on
-    // labor too, not just on parts.
-    // If the AI couldn't produce any priceable breakdown at all, fall back to
-    // a single flat-quote line so the technician's ask is still captured.
+    // Line items are priced the same way whether or not the technician gave
+    // a flat all-in ask: labor at the agreed Technician/Helper rate (never
+    // marked up), parts/other at their realistic cost x markup. The
+    // technician's flat quote (if any) never scales or reshapes these --
+    // see the flatQuoteContext comment above for why, and the dispatcher-
+    // facing comparison built further down, near the DB update.
     let lineItemRows = rawLineItemRows
-    if (isFlatQuoteMode) {
-      const naturalTotalCost = rawLineItemRows.reduce((s, r) => s + r.quantity * r.unit_cost, 0)
-      if (naturalTotalCost > 0) {
-        const scale = flatQuote! / naturalTotalCost
-        lineItemRows = rawLineItemRows.map((r) => {
-          const scaledCost = round2(r.unit_cost * scale)
-          // Labor's price is never scaled or tied to its allocated cost --
-          // it's always exactly hours x the agreed rate, same as an hourly job.
-          const unitPrice = r.kind === 'labor' ? r.unit_price : priceFor(r.kind, scaledCost, markupMult)
-          return { ...r, unit_cost: scaledCost, unit_price: unitPrice }
-        })
-      } else {
-        lineItemRows = [
-          {
-            proposal_id: proposalId,
-            kind: 'labor' as const,
-            description: 'Technician labor and parts (flat quote)',
-            role_id: null,
-            part_id: null,
-            quantity: 1,
-            unit_cost: flatQuote!,
-            unit_price: priceFor('labor', flatQuote!, markupMult),
-            needs_manual_pricing: false,
-            ai_suggested: true,
-            sort_order: 0,
-          },
-        ]
-      }
-    }
 
     // Trip Fee / Assessment Fee are fixed amounts the dispatcher enters by
-    // hand, separate from the technician's labor/parts cost (and from any
-    // flat-quote reconciliation above) -- billed to the client at exactly
-    // what was entered, with no markup applied. (tripFee/assessmentFee were
-    // already read up top, where they're also used to size the AI's target.)
+    // hand, separate from the technician's labor/parts cost -- billed to the
+    // client at exactly what was entered, with no markup applied.
     if (tripFee > 0) {
       lineItemRows = [
         ...lineItemRows,
@@ -706,6 +657,23 @@ ${lineItemRules}
       approvalLikelihoodBasisN = k
     }
 
+    // Dispatcher-facing comparison (computed here, not by the AI, so it's
+    // always arithmetically correct): if the technician asked for a flat
+    // amount well above what this job realistically costs to do, flag it as
+    // its own note rather than letting that gap leak into the client price.
+    // Realistic cost = labor + parts/other actually priced above, excluding
+    // the pass-through trip/assessment fees (those aren't part of what the
+    // technician is asking to be paid for).
+    let flatQuoteGapNote: string | null = null
+    if (isFlatQuoteMode) {
+      const realisticJobCost = round2(subtotalCost - tripFee - assessmentFee)
+      if (realisticJobCost > 0 && flatQuote! > realisticJobCost * 1.15 + 50) {
+        const overage = round2(flatQuote! - realisticJobCost)
+        flatQuoteGapNote = `The technician asked to be paid $${flatQuote} flat for this job, but a realistic labor + materials cost for this scope is only about $${realisticJobCost}. Paying him the full $${flatQuote} would cost roughly $${overage} more than this job is worth -- consider negotiating him down toward $${realisticJobCost}, or budget the difference as a loss on this job. (The proposal above is priced independently of this and is not affected.)`
+      }
+    }
+    const combinedPricingNote = [flatQuoteGapNote, draft.pricing_note?.trim() || null].filter(Boolean).join('\n\n') || null
+
     const { data: updatedProposal, error: updateErr } = await supabase
       .from('proposals')
       .update({
@@ -719,7 +687,7 @@ ${lineItemRules}
         // Dispatcher-only note (never shown to the client) -- cleared on a
         // regenerate that no longer flags an issue, so a stale warning
         // doesn't linger after the job or quote has changed.
-        ai_pricing_note: draft.pricing_note?.trim() || null,
+        ai_pricing_note: combinedPricingNote,
         approval_likelihood_pct: approvalLikelihoodPct,
         approval_likelihood_basis_n: approvalLikelihoodBasisN,
         approval_likelihood_scope: approvalLikelihoodPct != null ? outcomeScopeLabel : null,
