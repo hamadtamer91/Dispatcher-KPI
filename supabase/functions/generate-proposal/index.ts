@@ -136,7 +136,11 @@ Deno.serve(async (req) => {
       proposal_id: string | null
     }
     const outcomeClientName = proposal.client_name ?? workOrder?.client ?? null
-    const outcomeTradeName = workOrder?.trade ?? null
+    // Same idea as outcomeClientName -- this proposal's own Trade field
+    // (dispatcher-entered) wins when set, so AI Learning matching still works
+    // even for a job whose work order isn't in the Work Orders table yet or
+    // has no trade filled in there.
+    const outcomeTradeName = proposal.trade_name ?? workOrder?.trade ?? null
     const fetchOutcomes = async (filters: { client?: string; trade?: string }): Promise<OutcomeRow[]> => {
       let q = supabase
         .from('quote_outcomes')
@@ -332,7 +336,7 @@ You are helping a facilities-maintenance dispatcher turn field technician notes 
 
 Work order: ${workOrder?.wo ?? proposal.wo}
 Store/client: ${proposal.client_name ?? workOrder?.client ?? 'Unknown'}
-Trade / Subtrade: ${workOrder?.trade ?? 'Unknown'} / ${workOrder?.subtrade ?? 'n/a'}
+Trade / Subtrade: ${proposal.trade_name ?? workOrder?.trade ?? 'Unknown'} / ${workOrder?.subtrade ?? 'n/a'}
 Location: ${[workOrder?.address, workOrder?.city, workOrder?.state].filter(Boolean).join(', ') || 'Unknown'}
 Original issue description: ${workOrder?.description ?? 'n/a'}
 

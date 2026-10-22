@@ -126,6 +126,12 @@ export interface Proposal {
   // order's own client field is blank. Falls back to the work order's
   // client in the UI and the AI prompt when this is empty.
   client_name: string | null
+  // Dispatcher-entered trade for this specific proposal -- same idea as
+  // client_name: feeds the AI Learning match (and the AI prompt) even when
+  // this proposal's work order isn't in the Work Orders table yet or has no
+  // trade set. Falls back to the work order's trade in the UI and the AI
+  // prompt when this is empty.
+  trade_name: string | null
   version: number
   status: ProposalStatus
   markup_pct: number

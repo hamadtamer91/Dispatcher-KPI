@@ -50,6 +50,7 @@ export function ProposalDetailPage() {
 
   const [notes, setNotes] = useState('')
   const [clientName, setClientName] = useState('')
+  const [tradeName, setTradeName] = useState('')
   const [technicianRate, setTechnicianRate] = useState('')
   const [helperRate, setHelperRate] = useState('')
   const [flatQuote, setFlatQuote] = useState('')
@@ -65,6 +66,7 @@ export function ProposalDetailPage() {
     if (proposal) {
       setNotes(proposal.technician_notes ?? '')
       setClientName(proposal.client_name ?? '')
+      setTradeName(proposal.trade_name ?? '')
       setTechnicianRate(proposal.technician_rate != null ? String(proposal.technician_rate) : '')
       setHelperRate(proposal.helper_rate != null ? String(proposal.helper_rate) : '')
       setFlatQuote(proposal.technician_flat_quote != null ? String(proposal.technician_flat_quote) : '')
@@ -76,6 +78,7 @@ export function ProposalDetailPage() {
     proposal?.id,
     proposal?.technician_notes,
     proposal?.client_name,
+    proposal?.trade_name,
     proposal?.technician_rate,
     proposal?.helper_rate,
     proposal?.technician_flat_quote,
@@ -123,6 +126,7 @@ export function ProposalDetailPage() {
       await updateProposal({
         technician_notes: notes,
         client_name: clientName.trim() || null,
+        trade_name: tradeName.trim() || null,
         technician_rate: technicianRate.trim() ? Number(technicianRate) : null,
         helper_rate: helperRate.trim() ? Number(helperRate) : null,
         technician_flat_quote: flatQuote.trim() ? Number(flatQuote) : null,
@@ -167,7 +171,7 @@ export function ProposalDetailPage() {
         <div>
           <h2 className="text-xl font-extrabold text-ink tracking-tight">Proposal — WO {proposal.wo}</h2>
           <p className="text-sm text-ink-soft mt-1">
-            {proposal.client_name || workOrder?.client || 'Unassigned store'} · {workOrder?.trade || 'n/a'} · v{proposal.version}
+            {proposal.client_name || workOrder?.client || 'Unassigned store'} · {proposal.trade_name || workOrder?.trade || 'n/a'} · v{proposal.version}
           </p>
         </div>
         <Badge variant={STATUS_VARIANT[proposal.status]}>{PROPOSAL_STATUS_LABELS[proposal.status]}</Badge>
@@ -190,6 +194,24 @@ export function ProposalDetailPage() {
           />
           <p className="text-xs text-ink-faint mt-1">
             Tells the AI who this proposal is for. Leave blank to use the work order's client automatically.
+          </p>
+        </div>
+
+        <div>
+          <label className="text-sm font-bold text-ink">Trade</label>
+          <input
+            type="text"
+            value={tradeName}
+            onChange={(e) => setTradeName(e.target.value)}
+            onBlur={() => updateProposal({ trade_name: tradeName.trim() || null })}
+            disabled={isLocked}
+            placeholder={workOrder?.trade ? `Defaults to "${workOrder.trade}" from the work order` : 'e.g. Plumbing, Electrical, HVAC'}
+            className="field mt-1"
+          />
+          <p className="text-xs text-ink-faint mt-1">
+            Set this when the job's work order isn't in the Work Orders table yet or has no trade filled in there -- it's what AI
+            Learning matches against for pricing and approval-likelihood, so use the exact same spelling as your other AI Learning
+            entries for this trade (e.g. always "Plumbing", not "Plumbin"). Leave blank to use the work order's trade automatically.
           </p>
         </div>
 
@@ -549,7 +571,7 @@ export function ProposalDetailPage() {
               dispatcher_name: proposal.dispatcher_name,
               client: proposal.client_name ?? workOrder?.client ?? null,
               store: null,
-              trade: workOrder?.trade ?? null,
+              trade: proposal.trade_name ?? workOrder?.trade ?? null,
               subtrade: workOrder?.subtrade ?? null,
               job_description: workOrder?.description ?? null,
               total_price: subtotalPrice,
