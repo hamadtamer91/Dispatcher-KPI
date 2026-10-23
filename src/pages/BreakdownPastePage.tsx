@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ClipboardCheck, Loader2, Copy, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useEntityScope } from '../contexts/EntityScopeContext'
 import { useClients } from '../hooks/useClients'
 import { usePriceLists } from '../hooks/usePriceLists'
+import { useWorkOrders } from '../hooks/useWorkOrders'
 import { PROPOSAL_PRIORITY_OPTIONS } from '../lib/types'
 import type { ProposalPriority } from '../lib/types'
 import { Badge, Button, PageHeader, Panel } from '../components/ui'
@@ -61,6 +62,7 @@ export function BreakdownPastePage() {
   const { activeEntityId } = useEntityScope()
   const { clients } = useClients()
   const { laborRates } = usePriceLists()
+  const { wos } = useWorkOrders()
 
   const tradeOptions = useMemo(() => {
     const names = laborRates
@@ -77,6 +79,29 @@ export function BreakdownPastePage() {
   const [priority, setPriority] = useState<ProposalPriority | ''>('')
   const [nte, setNte] = useState('')
   const [proposalText, setProposalText] = useState('')
+  const [autoFilledWo, setAutoFilledWo] = useState('')
+
+  // As soon as the typed WO# matches one already in the work order list,
+  // pull its client/trade/city/state/NTE straight in -- those are the
+  // authoritative values dispatch already has, so there's no reason to
+  // retype them. Only fields the work order actually has get overwritten;
+  // anything the dispatcher already typed for a field the WO leaves blank
+  // is left alone. Every field stays editable afterward.
+  useEffect(() => {
+    const trimmed = wo.trim()
+    if (!trimmed) {
+      setAutoFilledWo('')
+      return
+    }
+    const matched = wos.find((w) => w.wo.toLowerCase() === trimmed.toLowerCase())
+    if (!matched) return
+    if (matched.client) setClientName(matched.client)
+    if (matched.trade) setTradeName(matched.trade)
+    if (matched.city) setCity(matched.city)
+    if (matched.state) setState(matched.state)
+    if (matched.nte != null) setNte(String(matched.nte))
+    setAutoFilledWo(matched.wo)
+  }, [wo, wos])
 
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
@@ -161,7 +186,24 @@ export function BreakdownPastePage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div>
             <label className="text-sm font-bold text-ink">Work Order #</label>
-            <input type="text" value={wo} onChange={(e) => setWo(e.target.value)} placeholder="WO #" className="field mt-1 w-full" />
+            <input
+              type="text"
+              list="paste-wos"
+              value={wo}
+              onChange={(e) => setWo(e.target.value)}
+              placeholder="WO #"
+              className="field mt-1 w-full"
+            />
+            <datalist id="paste-wos">
+              {wos.map((w) => (
+                <option key={w.wo} value={w.wo} />
+              ))}
+            </datalist>
+            {autoFilledWo && (
+              <p className="text-xs text-good mt-1">
+                Found WO {autoFilledWo} -- client/trade/city/state/NTE filled in below. Edit any field if it's wrong.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-sm font-bold text-ink">Client</label>
