@@ -183,10 +183,10 @@ export interface Proposal {
   state: string | null
   // Response/completion window the client committed to for this job.
   priority: ProposalPriority | null
-  // Whether the quoted price fits within the client's Not-To-Exceed ceiling
-  // for this proposal specifically (separate from a work order's own
-  // nte_approved, which is about the work order's NTE, not this quote).
-  nte_approved: boolean | null
+  // The client's Not-To-Exceed ceiling for this job, in dollars -- a data
+  // entry field, defaulting to the linked work order's own NTE from the
+  // synced sheet when left blank.
+  nte: number | null
   version: number
   status: ProposalStatus
   markup_pct: number

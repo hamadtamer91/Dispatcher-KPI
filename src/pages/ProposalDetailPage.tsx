@@ -58,7 +58,7 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
   const [city, setCity] = useState('')
   const [state, setState] = useState('')
   const [priority, setPriority] = useState<ProposalPriority | ''>('')
-  const [nteApproved, setNteApproved] = useState(false)
+  const [nte, setNte] = useState('')
   const [addingClient, setAddingClient] = useState(false)
   const [newClientName, setNewClientName] = useState('')
   const [clientErr, setClientErr] = useState('')
@@ -92,7 +92,7 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
       setCity(proposal.city ?? '')
       setState(proposal.state ?? '')
       setPriority((proposal.priority as ProposalPriority) ?? '')
-      setNteApproved(proposal.nte_approved ?? false)
+      setNte(proposal.nte != null ? String(proposal.nte) : '')
       setTechnicianRate(proposal.technician_rate != null ? String(proposal.technician_rate) : '')
       setHelperRate(proposal.helper_rate != null ? String(proposal.helper_rate) : '')
       setFlatQuote(proposal.technician_flat_quote != null ? String(proposal.technician_flat_quote) : '')
@@ -108,7 +108,7 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
     proposal?.city,
     proposal?.state,
     proposal?.priority,
-    proposal?.nte_approved,
+    proposal?.nte,
     proposal?.technician_rate,
     proposal?.helper_rate,
     proposal?.technician_flat_quote,
@@ -377,7 +377,7 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 items-end">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-bold text-ink">Priority</label>
             <select
@@ -396,19 +396,20 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
               ))}
             </select>
           </div>
-          <label className="inline-flex items-center gap-2 text-sm font-semibold text-ink pb-2">
+          <div>
+            <label className="text-sm font-bold text-ink">NTE ($)</label>
             <input
-              type="checkbox"
-              checked={nteApproved}
-              onChange={(e) => {
-                setNteApproved(e.target.checked)
-                updateProposal({ nte_approved: e.target.checked })
-              }}
+              type="number"
+              min="0"
+              step="0.01"
+              value={nte}
+              onChange={(e) => setNte(e.target.value)}
+              onBlur={() => updateProposal({ nte: nte.trim() ? Number(nte) : null })}
               disabled={isLocked}
-              className="h-4 w-4 rounded border-line"
+              placeholder={workOrder?.nte != null ? `Defaults to ${workOrder.nte} from the work order` : 'Not-to-exceed amount'}
+              className="field mt-1"
             />
-            NTE Approved
-          </label>
+          </div>
         </div>
 
         <div>
