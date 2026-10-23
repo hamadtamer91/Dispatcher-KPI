@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Trash2, UserPlus } from 'lucide-react'
+import { Fragment, useEffect, useState } from 'react'
+import { Loader2, Lock, Trash2, UserPlus } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useProfiles } from '../hooks/useProfiles'
 import { useEntities } from '../hooks/useEntities'
@@ -18,6 +18,10 @@ export function ManageUsersPage() {
   const [msg, setMsg] = useState<{ error?: string; success?: string } | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [roleErr, setRoleErr] = useState<{ id: string; message: string } | null>(null)
+  const [pwRowId, setPwRowId] = useState<string | null>(null)
+  const [pwValue, setPwValue] = useState('')
+  const [pwSubmitting, setPwSubmitting] = useState(false)
+  const [pwMsg, setPwMsg] = useState<{ id: string; error?: string; success?: string } | null>(null)
 
   // Default the new-user form to whichever entity is currently active in the
   // sidebar switcher -- still a deliberate choice, since it can be changed
@@ -106,6 +110,48 @@ export function ManageUsersPage() {
     }
   }
 
+  const togglePasswordRow = (id: string) => {
+    setPwMsg(null)
+    setPwValue('')
+    setPwRowId((cur) => (cur === id ? null : id))
+  }
+
+  const handleSetPassword = async (p: { id: string; display_name: string }) => {
+    setPwMsg(null)
+    if (pwValue.length < 8) {
+      setPwMsg({ id: p.id, error: 'Password must be at least 8 characters.' })
+      return
+    }
+    setPwSubmitting(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const { data, error } = await supabase.functions.invoke('admin-update-user-password', {
+        body: { userId: p.id, newPassword: pwValue },
+        headers: { Authorization: `Bearer ${session?.access_token ?? ''}` },
+      })
+      if (error) {
+        let message = error.message
+        try {
+          const ctx = (error as unknown as { context?: Response }).context
+          if (ctx) {
+            const body = await ctx.clone().json()
+            if (body?.error) message = body.error
+          }
+        } catch {
+          // fall back to error.message
+        }
+        throw new Error(message)
+      }
+      if (data?.error) throw new Error(data.error)
+      setPwMsg({ id: p.id, success: `Password updated for ${p.display_name}.` })
+      setPwValue('')
+    } catch (err) {
+      setPwMsg({ id: p.id, error: (err as Error).message || String(err) })
+    } finally {
+      setPwSubmitting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader title="Manage Users" description="Create logins and track scorecard inputs for the team." />
@@ -169,7 +215,8 @@ export function ManageUsersPage() {
           </thead>
           <tbody>
             {profiles.map((p) => (
-              <tr key={p.id} className="table-row">
+              <Fragment key={p.id}>
+              <tr className="table-row">
                 <td className="px-4 py-2.5 text-ink font-medium">
                   {p.display_name}
                   {p.id === currentUserId && <span className="text-ink-faint"> (you)</span>}
@@ -211,11 +258,48 @@ export function ManageUsersPage() {
                   <ScoreInput value={p.system_usage} onBlur={(v) => updateScorecard(p.id, p.app_ivr ?? 0, v)} />
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <button onClick={() => handleRemove(p.id, p.display_name)} className="text-ink-faint hover:text-danger transition-colors">
-                    <Trash2 size={14} />
-                  </button>
+                  <div className="flex items-center justify-end gap-2">
+                    <button onClick={() => togglePasswordRow(p.id)} className="text-ink-faint hover:text-brand transition-colors" title="Change password">
+                      <Lock size={14} />
+                    </button>
+                    <button onClick={() => handleRemove(p.id, p.display_name)} className="text-ink-faint hover:text-danger transition-colors" title="Remove login">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </td>
               </tr>
+              {pwRowId === p.id && (
+                <tr className="table-row bg-canvas">
+                  <td colSpan={7} className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        autoFocus
+                        value={pwValue}
+                        onChange={(e) => setPwValue(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSetPassword(p)}
+                        placeholder={`New password for ${p.display_name} (8+ characters)`}
+                        className="field py-1 text-sm w-72"
+                      />
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon={pwSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+                        disabled={pwSubmitting}
+                        onClick={() => handleSetPassword(p)}
+                      >
+                        {pwSubmitting ? 'Setting...' : 'Set Password'}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => togglePasswordRow(p.id)}>
+                        Cancel
+                      </Button>
+                    </div>
+                    {pwMsg?.id === p.id && pwMsg.error && <p className="text-xs text-danger mt-2">{pwMsg.error}</p>}
+                    {pwMsg?.id === p.id && pwMsg.success && <p className="text-xs text-good mt-2">{pwMsg.success}</p>}
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>
