@@ -10,12 +10,14 @@ import type { Role } from '../lib/types'
 const DEFAULT_FORM = { email: '', password: '', role: 'dispatcher' as Role, displayName: '', dispatcherName: '', entityId: '' }
 
 export function ManageUsersPage() {
-  const { profiles, refetch, updateScorecard, updateEntity, deleteProfile } = useProfiles()
+  const { profiles, refetch, updateScorecard, updateEntity, updateRole, updateDispatcherName, deleteProfile } = useProfiles()
   const { entities } = useEntities()
   const { activeEntityId } = useEntityScope()
   const [form, setForm] = useState(DEFAULT_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [msg, setMsg] = useState<{ error?: string; success?: string } | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [roleErr, setRoleErr] = useState<{ id: string; message: string } | null>(null)
 
   // Default the new-user form to whichever entity is currently active in the
   // sidebar switcher -- still a deliberate choice, since it can be changed
@@ -23,6 +25,24 @@ export function ManageUsersPage() {
   useEffect(() => {
     setForm((f) => (f.entityId ? f : { ...f, entityId: activeEntityId }))
   }, [activeEntityId])
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null))
+  }, [])
+
+  const handleRoleChange = async (profile: { id: string; display_name: string; role: Role }, next: Role) => {
+    setRoleErr(null)
+    if (profile.id === currentUserId && profile.role === 'super_admin' && next !== 'super_admin') {
+      if (!confirm(`This removes your own Super Admin access -- you won't be able to undo it yourself. Continue?`)) {
+        return
+      }
+    }
+    try {
+      await updateRole(profile.id, next)
+    } catch (err) {
+      setRoleErr({ id: profile.id, message: (err as Error).message || String(err) })
+    }
+  }
 
   const handleCreate = async () => {
     setMsg(null)
@@ -150,8 +170,22 @@ export function ManageUsersPage() {
           <tbody>
             {profiles.map((p) => (
               <tr key={p.id} className="table-row">
-                <td className="px-4 py-2.5 text-ink font-medium">{p.display_name}</td>
-                <td className="px-4 py-2.5 text-ink-soft capitalize">{p.role.replace(/_/g, ' ')}</td>
+                <td className="px-4 py-2.5 text-ink font-medium">
+                  {p.display_name}
+                  {p.id === currentUserId && <span className="text-ink-faint"> (you)</span>}
+                </td>
+                <td className="px-4 py-2.5">
+                  <select
+                    value={p.role}
+                    onChange={(e) => handleRoleChange(p, e.target.value as Role)}
+                    className="field py-1 text-sm"
+                  >
+                    <option value="dispatcher">Dispatcher</option>
+                    <option value="data_entry">Data Entry</option>
+                    <option value="super_admin">Super Admin</option>
+                  </select>
+                  {roleErr?.id === p.id && <p className="text-xs text-danger mt-1">{roleErr.message}</p>}
+                </td>
                 <td className="px-4 py-2.5">
                   <select
                     value={p.entity_id}
@@ -163,7 +197,13 @@ export function ManageUsersPage() {
                     ))}
                   </select>
                 </td>
-                <td className="px-4 py-2.5 text-ink-soft">{p.dispatcher_name ?? '—'}</td>
+                <td className="px-4 py-2.5">
+                  <TextInput
+                    value={p.dispatcher_name}
+                    placeholder={p.role === 'dispatcher' ? 'Must match work orders' : '—'}
+                    onBlur={(v) => updateDispatcherName(p.id, v)}
+                  />
+                </td>
                 <td className="px-4 py-2.5">
                   <ScoreInput value={p.app_ivr} onBlur={(v) => updateScorecard(p.id, v, p.system_usage ?? 0)} />
                 </td>
@@ -195,6 +235,20 @@ function ScoreInput({ value, onBlur }: { value: number | null; onBlur: (v: numbe
       onChange={(e) => setLocal(e.target.value)}
       onBlur={() => onBlur(Number(local) || 0)}
       className="field w-20 py-1"
+    />
+  )
+}
+
+function TextInput({ value, placeholder, onBlur }: { value: string | null; placeholder?: string; onBlur: (v: string) => void }) {
+  const [local, setLocal] = useState(value ?? '')
+  return (
+    <input
+      type="text"
+      value={local}
+      placeholder={placeholder}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => onBlur(local.trim())}
+      className="field py-1 text-sm w-40"
     />
   )
 }
