@@ -10,6 +10,54 @@ const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 // https://aistudio.google.com/app/apikey.
 const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-3.8-flash'
 
+// Global Maintenance Network's own entity id -- everything gated on this
+// (the equal-hours/narrative-length/O'Reilly rules below, and the sales-tax
+// line item) applies ONLY to GMN's proposals, never to CBRE/Nexa Fix or any
+// other entity's. See the GMN_ENTITY_ID export in src/lib/types.ts, which
+// the frontend's rate-sheet picker uses -- keep both in sync if this ever
+// changes.
+const GMN_ENTITY_ID = 'ab35027e-3ecc-42b4-9b39-5c6d7e342cd1'
+
+// Priority values that trigger GMN's EMG/after-hours rate (x1.5 on trip,
+// assessment, and labor including helper) -- mirrors GMN_EMG_PRIORITIES in
+// src/lib/types.ts. Anything else, including no priority at all, is normal
+// rate. This only affects what the dispatcher-facing GMN Rate Sheet UI sets
+// Technician/Helper/Trip/Assessment to -- this function itself never derives
+// labor rates, it only reads whatever the dispatcher already committed.
+const GMN_EMG_PRIORITIES = new Set(['ASAP', 'EMERGENCY', '4 Hours', '8 Hours', '12 Hours'])
+
+// US state sales tax rates (state base rate + the population-weighted
+// average local add-on, i.e. what a typical city in that state actually
+// charges) -- Tax Foundation, "2026 Sales Tax Rates", as of July 1 2026:
+// https://taxfoundation.org/data/all/state/2026-sales-tax-rates/
+// This is a STATE-level average, not an exact per-city lookup -- a specific
+// city's real combined rate can run a point or two above or below this
+// depending on its own local add-on. Good enough for a proposal-level
+// estimate; if GMN needs exact city-level precision, swap this for a real
+// tax-rate API/account (Avalara, TaxJar, etc) instead of a static table.
+// Keyed by the 2-letter state abbreviation, matching how `state` is actually
+// stored on work orders/proposals.
+const STATE_SALES_TAX_RATES: Record<string, number> = {
+  AL: 0.0946, AK: 0.0182, AZ: 0.0854, AR: 0.0948, CA: 0.0903, CO: 0.0789,
+  CT: 0.0635, DE: 0, DC: 0.06, FL: 0.0698, GA: 0.0756, HI: 0.045,
+  ID: 0.0603, IL: 0.0898, IN: 0.07, IA: 0.0694, KS: 0.0871, KY: 0.06,
+  LA: 0.1013, ME: 0.055, MD: 0.06, MA: 0.0625, MI: 0.06, MN: 0.0814,
+  MS: 0.0706, MO: 0.0844, MT: 0, NE: 0.0698, NV: 0.0824, NH: 0,
+  NJ: 0.066, NM: 0.0768, NY: 0.0854, NC: 0.071, ND: 0.0709, OH: 0.0729,
+  OK: 0.0906, OR: 0, PA: 0.0634, RI: 0.07, SC: 0.0749, SD: 0.0611,
+  TN: 0.0961, TX: 0.082, UT: 0.0742, VT: 0.0643, VA: 0.0577, WA: 0.0957,
+  WV: 0.066, WI: 0.0572, WY: 0.0539,
+}
+
+// Only O'Reilly and Bob Evans get a sales-tax line -- matched loosely
+// (letters/digits only, case-insensitive) so "O'Reilly", "Oreilly", "O'
+// Reilly Auto Parts" etc all match without needing an exact client-name
+// string.
+function isTaxableGmnClient(clientName: string | null | undefined): boolean {
+  const key = (clientName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  return key.includes('oreilly') || key.includes('bobevans')
+}
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -101,6 +149,13 @@ Deno.serve(async (req) => {
     if (!proposal.technician_notes || !proposal.technician_notes.trim()) {
       return jsonResponse({ error: 'Add technician notes to the proposal before generating a draft.' }, 400)
     }
+
+    // Everything below gated on this (equal-hours/narrative-length/O'Reilly
+    // rules in the prompt, and the sales-tax line item near the end) is
+    // specific to Global Maintenance Network -- CBRE/Nexa Fix and every
+    // other entity's proposals are completely unaffected.
+    const isGmn = proposal.entity_id === GMN_ENTITY_ID
+    const isGmnEmgPriority = isGmn && !!proposal.priority && GMN_EMG_PRIORITIES.has(proposal.priority)
 
     const flatQuote = proposal.technician_flat_quote != null ? Number(proposal.technician_flat_quote) : null
     const isFlatQuoteMode = flatQuote != null && !Number.isNaN(flatQuote) && flatQuote > 0
@@ -326,7 +381,31 @@ Equipment and service fees are a common, separate case technicians often describ
 
     const lineItemRules = `- line_items: one per distinct task or material. kind="labor" for people's time (role_name "Technician", "Helper", or a catalog role as described above). kind="part" for any part or material, whether or not it's in the known catalog -- set part_name to the matching catalog name when it matches, and when it doesn't, leave part_name blank and supply suggested_unit_cost instead. kind="other" is only for real non-part, non-labor costs (permits, disposal fees, equipment rental, etc) -- also supply suggested_unit_cost for those.
 - quantity is the number of hours (labor) or count/units (part/other).
-- Do not include markup, margin, or price in your line items -- only cost-side quantity/role/part. Pricing is computed separately by the system.`
+- Do not include markup, margin, or price in your line items -- only cost-side quantity/role/part. Pricing is computed separately by the system.${
+      isGmn
+        ? `
+- Same hours for everyone on site: every Technician and Helper labor line on this job must carry the SAME quantity (hours). Never give a Helper fewer hours than the Technician -- if the job needs a helper for only part of the visit, still bill the Helper for the full Technician hours.`
+        : ''
+    }`
+
+    // Global Maintenance Network / O'Reilly-specific standing rules, from
+    // the dispatcher's own rejection-history notes below -- these are hard
+    // rules (not just calibration signal), so they go directly in the
+    // prompt rather than relying on the AI Learning nearest-neighbor match
+    // in outcomesContext to surface them. Gated to GMN only.
+    const gmnRulesBlock = isGmn
+      ? `
+Global Maintenance Network rules for this proposal (apply all of these). This job is billing at ${isGmnEmgPriority ? 'EMG/after-hours rates (Priority: ' + proposal.priority + ')' : 'normal rates'} -- the dispatcher has already set Technician/Helper/Trip/Assessment accordingly, so just be aware of it for narrative framing (e.g. mention it was an emergency/after-hours response when that's actually why, don't invent urgency otherwise):
+- Narrative length: for a simple, single-issue job, keep each of narrative_scope/narrative_findings/narrative_recommendation SHORT -- about 2-3 sentences each. Only write longer, more detailed narratives when the job is genuinely complex (multiple issues, an unusual finding, a repair that needs justifying -- see below).
+- Labor hours get pushed back on when they look padded for the scope (examples from real O'Reilly rejections: a single toilet replacement billed at 3 hours, 2 toilets at 5 hours total, 175 T8 lamps at 60 hours) -- estimate hours realistically and on the low/efficient side for routine work. Higher hours DO get approved when the narrative states the specific finding that justifies them (e.g. 4.5 EMG hours were approved for 2 sinks because the tailpiece was fractured from a soldered copper pipe with metal lodged in the drain) -- so if you're billing more time than a routine version of this job would need, narrative_findings must spell out the specific complication that justifies it.
+- Repair before replace: never default to full replacement when a repair would fix it (e.g. a continuous hinge instead of a whole storefront door). If you do recommend replacing more than one unit of something (e.g. 2 toilets), narrative_recommendation must state a specific reason each one needed replacing, not just "to be safe."
+- Toilets: assume gravity-flush (not pressure-assist) unless the notes say otherwise, and an ADA-height handle on the wide side (opposite the wall). A routine toilet job's total shouldn't run much past $1,000 absent a stated complication.
+- Do exactly the requested/described scope: if notes mention camera-ing a line, troubleshoot to a definite cause, or a specific client-given count, reflect that precisely rather than generalizing.
+- Door replacements for O'Reilly must itemize (not lump into one flat "door" line) each applicable component actually needed: continuous hinge, full-length steel astragal, heavy-duty exit device with outside pull cylinder, heavy-duty closer with hold-open, latch guard, door viewer, kick plate, threshold, weather seal, door sweep, and paint/powder-coat per O'Reilly's color card -- with type and quantity specified for each. The old door's disposal goes in the store's own dumpster (never a separate disposal-fee line for a door).
+- Itemize, don't flat-rate: O'Reilly wants parts/labor broken out as pieces/hours x $ rate, not a single lump sum (the rate sheet's own flat fees -- Trip, Assessment -- are fine as-is).
+- Never price a part the client/store supplied themselves -- only price what GMN's own technician supplied.
+- Shipping fees on parts are routinely rejected ("there's a local supply house for that") -- only include one when genuinely unavoidable, keep it modest, and flag it via pricing_note if it's more than a few dollars so the dispatcher can double-check before sending.`
+      : ''
 
     const contextText = `
 You are helping a facilities-maintenance dispatcher turn field technician notes into a client-facing repair/service proposal.
@@ -345,6 +424,7 @@ ${imageParts.length ? `\n${imageParts.length} technician photo(s) are attached b
 
 ${modeSection}
 ${outcomesContext ? `\n${outcomesContext}\n` : ''}
+${gmnRulesBlock}
 Write a client-facing proposal draft as a single JSON object matching the required schema. Rules:
 - narrative_scope: 2-4 sentences, written like an experienced facilities estimator, describing what work this job covers in plain, professional language a store manager would understand. Ground it in the specifics from the technician's notes (the actual component, system, and location involved) -- never fall back on generic phrasing like "various issues were addressed" when the notes give you something concrete to say instead.
 - narrative_findings: what the technician found on site -- the specific condition, likely cause, and extent of the issue, explained the way a skilled tech would walk a non-technical client through it. Pull in concrete details actually present in the notes (what was inspected or tested, what had failed, how severe it was) rather than summarizing in the abstract.
@@ -548,6 +628,47 @@ ${lineItemRules}
       ]
     }
 
+    // Sales tax -- Global Maintenance Network only, and only for O'Reilly /
+    // Bob Evans (see isTaxableGmnClient). Computed here in code, never by
+    // the AI, specifically because the dispatcher flagged rounding mistakes
+    // as a recurring problem -- this is the same reason Trip/Assessment Fee
+    // above are also code-computed rather than left to the model. Applied to
+    // the full pre-tax total (labor + parts/other + trip + assessment) by
+    // the job's own city/state, using round2's standard round-half-up to the
+    // nearest cent (verified against the dispatcher's own examples: 49.678
+    // -> 49.68, 49.674 -> 49.67, 53.125 -> 53.13).
+    let gmnTaxNote: string | null = null
+    if (isGmn && isTaxableGmnClient(proposal.client_name ?? workOrder?.client)) {
+      const stateKey = (proposal.state ?? workOrder?.state ?? '').trim().toUpperCase()
+      const taxRate = STATE_SALES_TAX_RATES[stateKey]
+      if (taxRate == null) {
+        gmnTaxNote = `This is an O'Reilly/Bob Evans job, which should include sales tax, but no state is set on the proposal (or "${stateKey}" isn't a recognized 2-letter state code) -- set City/State above and regenerate so tax can be added.`
+      } else if (taxRate > 0) {
+        const preTaxSubtotal = round2(lineItemRows.reduce((s, r) => s + Number(r.quantity) * Number(r.unit_price), 0))
+        const taxAmount = round2(preTaxSubtotal * taxRate)
+        if (taxAmount > 0) {
+          lineItemRows = [
+            ...lineItemRows,
+            {
+              proposal_id: proposalId,
+              kind: 'other' as const,
+              description: `Sales Tax (${stateKey}, ${(taxRate * 100).toFixed(2)}% avg. combined rate)`,
+              role_id: null,
+              part_id: null,
+              quantity: 1,
+              unit_cost: taxAmount,
+              unit_price: taxAmount,
+              needs_manual_pricing: false,
+              ai_suggested: true,
+              sort_order: lineItemRows.length,
+            },
+          ]
+        }
+      }
+      // taxRate === 0 (e.g. Delaware/Montana/NH/Oregon have no state sales
+      // tax) -- correctly no tax line, nothing to flag.
+    }
+
     // Regenerating replaces only the previously AI-suggested rows; anything the
     // dispatcher added by hand (ai_suggested = false) is left untouched.
     await supabase.from('proposal_line_items').delete().eq('proposal_id', proposalId).eq('ai_suggested', true)
@@ -692,7 +813,7 @@ ${lineItemRules}
           .join(', ')}.`
       : null
 
-    const combinedPricingNote = [flatQuoteGapNote, estimateOutlierNote, draft.pricing_note?.trim() || null].filter(Boolean).join('\n\n') || null
+    const combinedPricingNote = [gmnTaxNote, flatQuoteGapNote, estimateOutlierNote, draft.pricing_note?.trim() || null].filter(Boolean).join('\n\n') || null
 
     const { data: updatedProposal, error: updateErr } = await supabase
       .from('proposals')

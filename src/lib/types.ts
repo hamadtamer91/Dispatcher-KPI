@@ -81,9 +81,51 @@ export interface WorkOrder {
 
 export type ProposalStatus = 'draft' | 'ai_generated' | 'in_review' | 'approved' | 'sent'
 
-// Response/completion-time commitment for a proposal's job.
-export type ProposalPriority = '4 Hours' | '8 Hours' | '24 Hours' | '48 Hours' | '72 Hours'
-export const PROPOSAL_PRIORITY_OPTIONS: ProposalPriority[] = ['4 Hours', '8 Hours', '24 Hours', '48 Hours', '72 Hours']
+// Response/completion-time commitment for a proposal's job -- the work
+// order itself has no separate priority column (synced sheets don't carry
+// one), so this is the only place a job's urgency is captured. The set below
+// matches the real values seen on O'Reilly/Bob Evans (Global Maintenance
+// Network) work orders, which is also what that entity's EMG-vs-normal rate
+// rule keys off of (see generate-proposal's GMN-specific logic): ASAP,
+// EMERGENCY, 4/8/12 Hours trigger EMG rates; everything else (including no
+// priority at all) is normal rate.
+export type ProposalPriority =
+  | 'ASAP'
+  | 'EMERGENCY'
+  | '4 Hours'
+  | '8 Hours'
+  | '12 Hours'
+  | '24 Hours'
+  | '48 Hours'
+  | '72 Hours'
+  | '7 Days'
+  | '30 Days'
+  | 'URGENT - 24 HRS'
+export const PROPOSAL_PRIORITY_OPTIONS: ProposalPriority[] = [
+  'ASAP',
+  'EMERGENCY',
+  '4 Hours',
+  '8 Hours',
+  '12 Hours',
+  '24 Hours',
+  '48 Hours',
+  '72 Hours',
+  '7 Days',
+  '30 Days',
+  'URGENT - 24 HRS',
+]
+// Priority values that trigger Global Maintenance Network's EMG/after-hours
+// rate multiplier (x1.5 on trip, assessment, and labor including helper).
+// Anything else -- another listed value, or no priority at all -- is normal
+// rate. Exported so the frontend rate-card picker and any future reporting
+// can key off the exact same rule the edge function applies.
+export const GMN_EMG_PRIORITIES: ProposalPriority[] = ['ASAP', 'EMERGENCY', '4 Hours', '8 Hours', '12 Hours']
+
+// Global Maintenance Network's entity id -- referenced directly (rather than
+// only through entity_scope's activeEntityId) wherever a piece of UI or
+// logic is specific to this one entity's own rate sheet/tax rules, same
+// spirit as how the CBRE rate card only shows for a CBRE client.
+export const GMN_ENTITY_ID = 'ab35027e-3ecc-42b4-9b39-5c6d7e342cd1'
 
 export const PROPOSAL_STATUS_LABELS: Record<ProposalStatus, string> = {
   draft: 'Draft',

@@ -5,9 +5,11 @@ import { useProposalDetail } from '../hooks/useProposalDetail'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { useQuoteOutcomes } from '../hooks/useQuoteOutcomes'
 import { useCbreRateCard } from '../hooks/useCbreRateCard'
+import { usePriceLists } from '../hooks/usePriceLists'
 import { useClients } from '../hooks/useClients'
+import { useEntityScope } from '../contexts/EntityScopeContext'
 import { exportProposalDocx } from '../lib/exportProposalDocx'
-import { PROPOSAL_STATUS_LABELS, PROPOSAL_PRIORITY_OPTIONS, QUOTE_OUTCOME_LABELS } from '../lib/types'
+import { PROPOSAL_STATUS_LABELS, PROPOSAL_PRIORITY_OPTIONS, QUOTE_OUTCOME_LABELS, GMN_EMG_PRIORITIES, GMN_ENTITY_ID } from '../lib/types'
 import type { LineItemKind, ProposalLineItem, ProposalPriority, ProposalStatus, QuoteOutcomeResult, Role } from '../lib/types'
 import { Badge, Button } from '../components/ui'
 import type { BadgeVariant } from '../components/ui'
@@ -50,7 +52,9 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
   const { wos } = useWorkOrders()
   const { outcomes, recordProposalOutcome } = useQuoteOutcomes()
   const { rows: cbreRates } = useCbreRateCard()
+  const { laborRates: entityLaborRates } = usePriceLists()
   const { clients, addClient } = useClients()
+  const { activeEntityId } = useEntityScope()
 
   const [notes, setNotes] = useState('')
   const [clientName, setClientName] = useState('')
@@ -152,6 +156,20 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
   const isCbreClient = (clientName || workOrder?.client || '').toLowerCase().includes('cbre')
   const selectedCbreRate = cbreRates.find((r) => r.id === cbreSubtradeId)
 
+  // Global Maintenance Network's own rate sheet (Trip $75/$112.50 EMG flat
+  // for every trade, Assessment = 1hr of that trade's labor rate, Helper
+  // $65/$97.50 EMG) -- entity-gated rather than client-gated like CBRE above,
+  // since it applies to every GMN job, not just O'Reilly/Bob Evans (the tax
+  // rule further down is the one that's client-specific). EMG applies when
+  // Priority is one of the values that triggers it (ASAP/EMERGENCY/4-12
+  // Hours) -- see GMN_EMG_PRIORITIES.
+  const isGmnEntity = activeEntityId === GMN_ENTITY_ID
+  const isEmgPriority = !!priority && GMN_EMG_PRIORITIES.includes(priority as ProposalPriority)
+  const findGmnRate = (roleName: string) =>
+    entityLaborRates.find((r) => r.role_name.toLowerCase().trim() === roleName.toLowerCase().trim())
+  const gmnTradeRate = tradeName.trim() ? findGmnRate(isEmgPriority ? `${tradeName.trim()} (EMG)` : tradeName.trim()) : undefined
+  const gmnHelperRate = findGmnRate(isEmgPriority ? 'Helper (EMG)' : 'Helper')
+
   const isLocked = proposal?.status === 'approved' || proposal?.status === 'sent'
   const isFlatQuoteMode = proposal?.technician_flat_quote != null && Number(proposal.technician_flat_quote) > 0
 
@@ -228,6 +246,28 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
       helper_rate: apprentice,
       trip_fee: selectedCbreRate.trip_charge,
       assessment_fee: standard,
+    })
+  }
+
+  // Fills Technician Rate from GMN's rate sheet for the Trade field above
+  // (already EMG-adjusted if Priority triggers it), Helper Rate at the flat
+  // $65/$97.50, Trip Fee at the flat $75/$112.50 (one trip per job -- never
+  // add a second Trip Fee line by hand), and Assessment Fee equal to the
+  // trade's labor rate for 1 hour, exactly like the rate sheet specifies.
+  const handleApplyGmnRate = async () => {
+    if (!gmnTradeRate) return
+    const nextTechnicianRate = String(gmnTradeRate.hourly_cost)
+    const nextHelperRate = gmnHelperRate ? String(gmnHelperRate.hourly_cost) : ''
+    const nextTripFee = isEmgPriority ? '112.5' : '75'
+    setTechnicianRate(nextTechnicianRate)
+    setHelperRate(nextHelperRate)
+    setTripFee(nextTripFee)
+    setAssessmentFee(nextTechnicianRate)
+    await updateProposal({
+      technician_rate: gmnTradeRate.hourly_cost,
+      helper_rate: gmnHelperRate ? gmnHelperRate.hourly_cost : null,
+      trip_fee: isEmgPriority ? 112.5 : 75,
+      assessment_fee: gmnTradeRate.hourly_cost,
     })
   }
 
@@ -464,6 +504,31 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
             <p className="text-xs text-ink-faint">
               Fills in Technician Rate (CBRE's Standard tier), Helper Rate (their Apprentice tier), and the $65 trip fee below from
               CBRE's rate card for the selected subtrade and Regular/Overtime -- you can still adjust any of them afterward.
+            </p>
+          </div>
+        )}
+
+        {isGmnEntity && (
+          <div className="rounded-lg border border-line bg-canvas p-3 space-y-3">
+            <p className="text-sm font-bold text-ink">
+              Global Maintenance Network Rate Sheet {isEmgPriority && <span className="text-danger">(EMG rate -- Priority: {priority})</span>}
+            </p>
+            <div className="flex items-end gap-3">
+              <p className="text-xs text-ink-soft flex-1">
+                Trade: <span className="font-semibold text-ink">{tradeName || '(set the Trade field above first)'}</span>
+                {tradeName && !gmnTradeRate && (
+                  <span className="text-danger"> -- no rate on file for this trade name; check spelling or add it under Price Lists.</span>
+                )}
+              </p>
+              <Button type="button" onClick={handleApplyGmnRate} disabled={isLocked || !gmnTradeRate}>
+                Apply
+              </Button>
+            </div>
+            <p className="text-xs text-ink-faint">
+              Fills Technician Rate (${gmnTradeRate ? gmnTradeRate.hourly_cost : '--'}/hr), Helper Rate (flat $
+              {isEmgPriority ? '97.50' : '65'}/hr), Trip Fee (flat ${isEmgPriority ? '112.50' : '75'} -- one trip per job, never more),
+              and Assessment Fee (= 1 hour of the trade's labor rate) below. EMG applies automatically from the Priority field above
+              (ASAP, EMERGENCY, or 4/8/12 Hours); any other priority -- or none -- uses the normal rate.
             </p>
           </div>
         )}
