@@ -7,8 +7,20 @@ export interface Profile {
   dispatcher_name: string | null
   app_ivr: number | null
   system_usage: number | null
+  entity_id: string
   created_at?: string
   updated_at?: string
+}
+
+// One of the business entities this app serves -- Work Orders, Proposals, AI
+// Learning, and Price Lists are all isolated per entity (see entity_id
+// columns + RLS). super_admin sees across all entities; dispatcher and
+// data_entry are locked to their own entity's data.
+export interface Entity {
+  id: string
+  name: string
+  active: boolean
+  created_at?: string
 }
 
 export interface WorkOrder {

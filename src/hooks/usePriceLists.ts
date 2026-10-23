@@ -1,25 +1,29 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useEntityScope } from '../contexts/EntityScopeContext'
 import type { LaborRate, PartItem } from '../lib/types'
 
-/** Labor rates + parts catalog, editable by super_admin, data_entry, and dispatcher. */
+/** Labor rates + parts catalog for the active entity, editable by
+ *  super_admin, data_entry, and dispatcher. */
 export function usePriceLists() {
+  const { activeEntityId } = useEntityScope()
   const [laborRates, setLaborRates] = useState<LaborRate[]>([])
   const [parts, setParts] = useState<PartItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    if (!activeEntityId) return
     setLoading(true)
     const [{ data: lr, error: lrErr }, { data: pp, error: ppErr }] = await Promise.all([
-      supabase.from('labor_rates').select('*').order('role_name'),
-      supabase.from('parts_price_list').select('*').order('name'),
+      supabase.from('labor_rates').select('*').eq('entity_id', activeEntityId).order('role_name'),
+      supabase.from('parts_price_list').select('*').eq('entity_id', activeEntityId).order('name'),
     ])
     setError(lrErr?.message || ppErr?.message || null)
     setLaborRates((lr as LaborRate[]) ?? [])
     setParts((pp as PartItem[]) ?? [])
     setLoading(false)
-  }, [])
+  }, [activeEntityId])
 
   useEffect(() => {
     refresh()
@@ -29,11 +33,11 @@ export function usePriceLists() {
     async (rate: Partial<LaborRate>) => {
       const { error: err } = rate.id
         ? await supabase.from('labor_rates').update(rate).eq('id', rate.id)
-        : await supabase.from('labor_rates').insert(rate)
+        : await supabase.from('labor_rates').insert({ ...rate, entity_id: activeEntityId })
       if (err) throw err
       await refresh()
     },
-    [refresh],
+    [refresh, activeEntityId],
   )
 
   const deleteLaborRate = useCallback(
@@ -49,11 +53,11 @@ export function usePriceLists() {
     async (part: Partial<PartItem>) => {
       const { error: err } = part.id
         ? await supabase.from('parts_price_list').update(part).eq('id', part.id)
-        : await supabase.from('parts_price_list').insert(part)
+        : await supabase.from('parts_price_list').insert({ ...part, entity_id: activeEntityId })
       if (err) throw err
       await refresh()
     },
-    [refresh],
+    [refresh, activeEntityId],
   )
 
   const deletePart = useCallback(

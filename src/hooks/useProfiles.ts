@@ -21,10 +21,15 @@ export function useProfiles() {
     refetch()
   }, [refetch])
 
+  const updateEntity = useCallback(async (id: string, entity_id: string) => {
+    await supabase.from('profiles').update({ entity_id }).eq('id', id)
+    refetch()
+  }, [refetch])
+
   const deleteProfile = useCallback(async (id: string) => {
     await supabase.from('profiles').delete().eq('id', id)
     refetch()
   }, [refetch])
 
-  return { profiles, loading, refetch, updateScorecard, deleteProfile }
+  return { profiles, loading, refetch, updateScorecard, updateEntity, deleteProfile }
 }

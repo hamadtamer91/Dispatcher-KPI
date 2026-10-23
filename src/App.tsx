@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from './hooks/useAuth'
 import { useLiveCallCount } from './hooks/useLiveCallCount'
+import { EntityScopeProvider, useEntityScope } from './contexts/EntityScopeContext'
 import { LoginPage } from './pages/LoginPage'
 import { WorkOrdersPage } from './pages/WorkOrdersPage'
 import { KPIOverviewPage } from './pages/KPIOverviewPage'
@@ -184,69 +185,73 @@ export default function App() {
   )
 
   return (
-    <div className="min-h-screen bg-canvas md:flex">
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex md:w-60 md:flex-col md:fixed md:inset-y-0 border-r border-line bg-white">
-        <BrandMark />
-        <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
-        <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
-      </aside>
+    <EntityScopeProvider profile={profile}>
+      <div className="min-h-screen bg-canvas md:flex">
+        {/* Desktop sidebar */}
+        <aside className="hidden md:flex md:w-60 md:flex-col md:fixed md:inset-y-0 border-r border-line bg-white">
+          <BrandMark />
+          <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
+          <EntitySwitcher />
+          <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
+        </aside>
 
-      {/* Mobile top bar */}
-      <div className="md:hidden sticky top-0 z-30 bg-white border-b border-line flex items-center justify-between px-4 py-3">
-        <BrandMark compact />
-        <button onClick={() => setMobileNavOpen(true)} className="btn-icon">
-          <Menu size={20} />
-        </button>
-      </div>
-
-      {/* Mobile slide-over nav */}
-      <AnimatePresence>
-        {mobileNavOpen && (
-          <>
-            <motion.div
-              className="fixed inset-0 bg-ink/40 z-40 md:hidden"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setMobileNavOpen(false)}
-            />
-            <motion.aside
-              className="fixed inset-y-0 left-0 w-72 bg-white z-50 flex flex-col md:hidden"
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ duration: 0.22, ease: 'easeOut' }}
-            >
-              <div className="flex items-center justify-between px-4 py-4 border-b border-line-soft">
-                <BrandMark compact />
-                <button onClick={() => setMobileNavOpen(false)} className="btn-icon">
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
-              <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
-
-      <main className="flex-1 md:ml-60 min-w-0">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={motionKey}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
-            >
-              {pageContent}
-            </motion.div>
-          </AnimatePresence>
+        {/* Mobile top bar */}
+        <div className="md:hidden sticky top-0 z-30 bg-white border-b border-line flex items-center justify-between px-4 py-3">
+          <BrandMark compact />
+          <button onClick={() => setMobileNavOpen(true)} className="btn-icon">
+            <Menu size={20} />
+          </button>
         </div>
-      </main>
-    </div>
+
+        {/* Mobile slide-over nav */}
+        <AnimatePresence>
+          {mobileNavOpen && (
+            <>
+              <motion.div
+                className="fixed inset-0 bg-ink/40 z-40 md:hidden"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setMobileNavOpen(false)}
+              />
+              <motion.aside
+                className="fixed inset-y-0 left-0 w-72 bg-white z-50 flex flex-col md:hidden"
+                initial={{ x: '-100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '-100%' }}
+                transition={{ duration: 0.22, ease: 'easeOut' }}
+              >
+                <div className="flex items-center justify-between px-4 py-4 border-b border-line-soft">
+                  <BrandMark compact />
+                  <button onClick={() => setMobileNavOpen(false)} className="btn-icon">
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
+                <EntitySwitcher />
+                <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
+              </motion.aside>
+            </>
+          )}
+        </AnimatePresence>
+
+        <main className="flex-1 md:ml-60 min-w-0">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={motionKey}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+              >
+                {pageContent}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
+    </EntityScopeProvider>
   )
 }
 
@@ -264,7 +269,32 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
   )
 }
 
+// Lets a super_admin pick which entity's Work Orders, Proposals, AI Learning
+// and Price Lists they're currently viewing and creating under. Hidden for
+// dispatcher/data_entry since RLS already locks them to their own entity.
+function EntitySwitcher() {
+  const { switchableEntities, activeEntityId, setActiveEntityId } = useEntityScope()
+  if (switchableEntities.length === 0) return null
+  return (
+    <div className="border-t border-line-soft px-3 py-2.5">
+      <label className="block text-[10px] font-bold text-ink-faint uppercase tracking-wide mb-1">Entity</label>
+      <select
+        value={activeEntityId}
+        onChange={(e) => setActiveEntityId(e.target.value)}
+        className="field w-full text-sm py-1.5"
+      >
+        {switchableEntities.map((e) => (
+          <option key={e.id} value={e.id}>{e.name}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 function UserCard({ name, role, onSignOut }: { name: string; role: string; onSignOut: () => void }) {
+  // Super_admin already sees (and can change) their active entity in the
+  // switcher just above this card -- repeating it here would be noise.
+  const { activeEntityName, isSuperAdmin } = useEntityScope()
   return (
     <div className="border-t border-line-soft px-3 py-3 flex items-center gap-2.5">
       <div className="w-8 h-8 rounded-full bg-brand-50 text-brand-700 font-bold text-xs flex items-center justify-center shrink-0">
@@ -272,7 +302,9 @@ function UserCard({ name, role, onSignOut }: { name: string; role: string; onSig
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-ink truncate">{name}</p>
-        <p className="text-xs text-ink-faint capitalize">{role.replace('_', ' ')}</p>
+        <p className="text-xs text-ink-faint capitalize truncate">
+          {role.replace('_', ' ')}{!isSuperAdmin && activeEntityName ? ` · ${activeEntityName}` : ''}
+        </p>
       </div>
       <button onClick={onSignOut} className="btn-icon" title="Sign out">
         <LogOut size={16} />

@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useEntityScope } from '../contexts/EntityScopeContext'
 import type { QuoteOutcome } from '../lib/types'
 
 export type NewQuoteOutcome = Omit<QuoteOutcome, 'id' | 'created_by' | 'created_at' | 'updated_at'>
 
 /** Labeled quote outcomes (approved/rejected/revision-requested) -- shared
- *  across the whole team, same as the labor rates and parts catalog, since
- *  the AI reads all of it (not just the current user's) when pricing a new
- *  proposal. */
+ *  across the active entity's whole team, same as that entity's labor rates
+ *  and parts catalog, since the AI reads all of it (not just the current
+ *  user's) when pricing a new proposal for that entity. */
 export function useQuoteOutcomes() {
+  const { activeEntityId } = useEntityScope()
   const [outcomes, setOutcomes] = useState<QuoteOutcome[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    if (!activeEntityId) return
     setLoading(true)
     const { data, error: err } = await supabase
       .from('quote_outcomes')
       .select('*')
+      .eq('entity_id', activeEntityId)
       .order('created_at', { ascending: false })
     if (err) setError(err.message)
     else {
@@ -25,7 +29,7 @@ export function useQuoteOutcomes() {
       setError(null)
     }
     setLoading(false)
-  }, [])
+  }, [activeEntityId])
 
   useEffect(() => {
     refresh()
@@ -38,14 +42,14 @@ export function useQuoteOutcomes() {
       } = await supabase.auth.getUser()
       const { data, error: err } = await supabase
         .from('quote_outcomes')
-        .insert({ ...row, created_by: user?.id ?? null })
+        .insert({ ...row, created_by: user?.id ?? null, entity_id: activeEntityId })
         .select()
         .single()
       if (err) throw err
       await refresh()
       return data as QuoteOutcome
     },
-    [refresh],
+    [refresh, activeEntityId],
   )
 
   const updateOutcome = useCallback(

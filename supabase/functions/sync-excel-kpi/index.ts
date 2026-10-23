@@ -79,6 +79,109 @@ function sanitizeValue(col: string, raw: any): any {
   return typeof raw === 'string' ? raw : String(raw)
 }
 
+// One entity's Microsoft Graph workbook config, resolved from
+// entity_work_order_sources with the shared MS_* env secrets as a fallback
+// for tenantId/clientId/clientSecret when that row doesn't set its own
+// (i.e. this entity's workbook lives under the same Microsoft 365
+// tenant/app as whichever entity set those shared secrets up first).
+interface SourceConfig {
+  entityId: string
+  entityName: string
+  shareUrl: string
+  tableName: string
+  tenantId: string
+  clientId: string
+  clientSecret: string
+}
+
+async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof createClient>) {
+  const tokenRes = await fetch(
+    `https://login.microsoftonline.com/${source.tenantId}/oauth2/v2.0/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: source.clientId,
+        client_secret: source.clientSecret,
+        scope: 'https://graph.microsoft.com/.default',
+        grant_type: 'client_credentials',
+      }),
+    }
+  )
+  const tokenData = await tokenRes.json()
+  if (!tokenRes.ok) {
+    return { entity: source.entityName, step: 'token', error: tokenData }
+  }
+  const token = tokenData.access_token
+
+  const shareId = encodeSharingUrl(source.shareUrl)
+  const driveItemRes = await fetch(
+    `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const driveItemData = await driveItemRes.json()
+  if (!driveItemRes.ok) {
+    return { entity: source.entityName, step: 'resolve_share', error: driveItemData }
+  }
+  const driveId = driveItemData.parentReference?.driveId
+  const itemId = driveItemData.id
+  if (!driveId || !itemId) {
+    return { entity: source.entityName, step: 'resolve_share', error: 'missing driveId/itemId', raw: driveItemData }
+  }
+
+  // Look up the table's actual header row so we can find the store/client
+  // column by name instead of assuming a fixed position for it.
+  const columnsRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/columns?$select=name,index`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const columnsData = await columnsRes.json()
+  if (!columnsRes.ok) {
+    return { entity: source.entityName, step: 'columns', error: columnsData, driveId, itemId }
+  }
+  const tableColumns: { name: string; index: number }[] = columnsData.value ?? []
+  const clientColumn = tableColumns.find((c) => CLIENT_HEADER_PATTERN.test(c.name ?? ''))
+  const clientColumnIndex = clientColumn ? clientColumn.index : null
+
+  const rowsRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/rows`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const rowsData = await rowsRes.json()
+  if (!rowsRes.ok) {
+    return { entity: source.entityName, step: 'rows', error: rowsData, driveId, itemId }
+  }
+
+  const rawRows = rowsData.value ?? []
+  const allRecords = rawRows.map((row: any) => {
+    const values = row.values[0]
+    const record: Record<string, any> = {}
+    COLUMN_MAP.forEach((col, i) => {
+      if (col !== 'col_blank1') record[col] = sanitizeValue(col, values[i])
+    })
+    record.client = clientColumnIndex !== null ? sanitizeValue('client', values[clientColumnIndex]) : null
+    record.entity_id = source.entityId
+    return record
+  })
+
+  const records = allRecords.filter((r: any) => r.wo !== null && r.wo !== '')
+  const skipped = allRecords.length - records.length
+
+  if (records.length > 0) {
+    const { error } = await supabase.from('work_orders').upsert(records, { onConflict: 'wo' })
+    if (error) {
+      return { entity: source.entityName, step: 'upsert', error, sampleMapped: records[0] }
+    }
+  }
+
+  return {
+    entity: source.entityName,
+    synced: records.length,
+    skipped,
+    clientColumnFound: clientColumn ? clientColumn.name : null,
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     const TENANT_ID = Deno.env.get('MS_TENANT_ID')
@@ -89,55 +192,99 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
     const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
-    const missing = Object.entries({ TENANT_ID, CLIENT_ID, CLIENT_SECRET, SHARE_URL, TABLE_NAME, SUPABASE_URL, SERVICE_ROLE_KEY })
-      .filter(([, v]) => !v).map(([k]) => k)
-    if (missing.length > 0) {
-      return new Response(JSON.stringify({ step: 'env_check', error: `Missing env vars: ${missing.join(', ')}` }), { status: 500 })
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+      return new Response(JSON.stringify({ step: 'env_check', error: 'Missing env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY' }), { status: 500 })
     }
 
-    const supabase = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!)
+    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
-    const tokenRes = await fetch(
-      `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: CLIENT_ID!,
-          client_secret: CLIENT_SECRET!,
-          scope: 'https://graph.microsoft.com/.default',
-          grant_type: 'client_credentials',
-        }),
+    // Bootstrap: Global Maintenance Network has been syncing via the shared
+    // MS_* env vars since before entities/per-entity sources existed. Give
+    // it a row here (never overwriting one that's already there) so every
+    // entity's config -- this one included -- lives in one place going
+    // forward, without ever having to know or re-enter the existing secret.
+    if (SHARE_URL && TABLE_NAME) {
+      const { data: gmn } = await supabase.from('entities').select('id').eq('name', 'Global Maintenance Network').maybeSingle()
+      if (gmn) {
+        await supabase.from('entity_work_order_sources').upsert(
+          { entity_id: gmn.id, ms_share_url: SHARE_URL, ms_table_name: TABLE_NAME },
+          { onConflict: 'entity_id', ignoreDuplicates: true }
+        )
       }
-    )
-    const tokenData = await tokenRes.json()
-    if (!tokenRes.ok) {
-      return new Response(JSON.stringify({ step: 'token', error: tokenData }), { status: 500 })
-    }
-    const token = tokenData.access_token
-
-    const shareId = encodeSharingUrl(SHARE_URL!)
-    const driveItemRes = await fetch(
-      `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    )
-    const driveItemData = await driveItemRes.json()
-    if (!driveItemRes.ok) {
-      return new Response(JSON.stringify({ step: 'resolve_share', error: driveItemData, shareId }), { status: 500 })
-    }
-    const driveId = driveItemData.parentReference?.driveId
-    const itemId = driveItemData.id
-    if (!driveId || !itemId) {
-      return new Response(JSON.stringify({ step: 'resolve_share', error: 'missing driveId/itemId', raw: driveItemData }), { status: 500 })
     }
 
-    // Diagnostic mode (?diagnose=1): report every worksheet and every table in
-    // the whole workbook, instead of running the normal sync. Lets us see
-    // whether there is other data (other tabs / other tables) this sync never
-    // touches, since the normal sync only ever reads the one table named by
-    // MS_TABLE_NAME.
+    const { data: sourceRows, error: sourcesErr } = await supabase
+      .from('entity_work_order_sources')
+      .select('entity_id, ms_share_url, ms_table_name, ms_tenant_id, ms_client_id, ms_client_secret, entities(name)')
+      .eq('active', true)
+    if (sourcesErr) {
+      return new Response(JSON.stringify({ step: 'load_sources', error: sourcesErr }), { status: 500 })
+    }
+
+    const sources: SourceConfig[] = (sourceRows ?? []).map((row: any) => ({
+      entityId: row.entity_id,
+      entityName: row.entities?.name ?? row.entity_id,
+      shareUrl: row.ms_share_url,
+      tableName: row.ms_table_name,
+      tenantId: row.ms_tenant_id || TENANT_ID || '',
+      clientId: row.ms_client_id || CLIENT_ID || '',
+      clientSecret: row.ms_client_secret || CLIENT_SECRET || '',
+    }))
+
+    if (sources.length === 0) {
+      return new Response(JSON.stringify({ synced: 0, skipped: 0, note: 'No entity work order sources configured yet.' }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Diagnostic mode (?diagnose=1[&entity=<name or id>]): report every
+    // worksheet and every table in one entity's whole workbook, instead of
+    // running the normal sync. Defaults to the first configured source when
+    // no entity is named.
     const url = new URL(req.url)
     if (url.searchParams.get('diagnose') === '1') {
+      const entityFilter = url.searchParams.get('entity')
+      const target = entityFilter
+        ? sources.find((s) => s.entityId === entityFilter || s.entityName.toLowerCase() === entityFilter.toLowerCase())
+        : sources[0]
+      if (!target) {
+        return new Response(JSON.stringify({ error: `No configured source matches entity "${entityFilter}"`, availableEntities: sources.map((s) => s.entityName) }), { status: 400 })
+      }
+
+      const tokenRes = await fetch(
+        `https://login.microsoftonline.com/${target.tenantId}/oauth2/v2.0/token`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: target.clientId,
+            client_secret: target.clientSecret,
+            scope: 'https://graph.microsoft.com/.default',
+            grant_type: 'client_credentials',
+          }),
+        }
+      )
+      const tokenData = await tokenRes.json()
+      if (!tokenRes.ok) {
+        return new Response(JSON.stringify({ step: 'token', error: tokenData, entity: target.entityName }), { status: 500 })
+      }
+      const token = tokenData.access_token
+
+      const shareId = encodeSharingUrl(target.shareUrl)
+      const driveItemRes = await fetch(
+        `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      const driveItemData = await driveItemRes.json()
+      if (!driveItemRes.ok) {
+        return new Response(JSON.stringify({ step: 'resolve_share', error: driveItemData, entity: target.entityName, shareId }), { status: 500 })
+      }
+      const driveId = driveItemData.parentReference?.driveId
+      const itemId = driveItemData.id
+      if (!driveId || !itemId) {
+        return new Response(JSON.stringify({ step: 'resolve_share', error: 'missing driveId/itemId', raw: driveItemData, entity: target.entityName }), { status: 500 })
+      }
+
       const [wsRes, tblRes] = await Promise.all([
         fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/worksheets?$select=id,name,position,visibility`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables?$select=id,name,worksheet&$expand=worksheet($select=name)`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -146,62 +293,35 @@ Deno.serve(async (req) => {
       const tblData = await tblRes.json()
       return new Response(JSON.stringify({
         diagnose: true,
-        currentlySyncedTable: TABLE_NAME,
+        entity: target.entityName,
+        currentlySyncedTable: target.tableName,
         worksheets: wsRes.ok ? wsData.value : { error: wsData },
         tables: tblRes.ok ? tblData.value : { error: tblData },
       }), { headers: { 'Content-Type': 'application/json' } })
     }
 
-    // Look up the table's actual header row so we can find the store/client
-    // column by name instead of assuming a fixed position for it.
-    const columnsRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${TABLE_NAME}/columns?$select=name,index`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    )
-    const columnsData = await columnsRes.json()
-    if (!columnsRes.ok) {
-      return new Response(JSON.stringify({ step: 'columns', error: columnsData, driveId, itemId }), { status: 500 })
-    }
-    const tableColumns: { name: string; index: number }[] = columnsData.value ?? []
-    const clientColumn = tableColumns.find((c) => CLIENT_HEADER_PATTERN.test(c.name ?? ''))
-    const clientColumnIndex = clientColumn ? clientColumn.index : null
-
-    const rowsRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${TABLE_NAME}/rows`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    )
-    const rowsData = await rowsRes.json()
-    if (!rowsRes.ok) {
-      return new Response(JSON.stringify({ step: 'rows', error: rowsData, driveId, itemId }), { status: 500 })
-    }
-
-    const rawRows = rowsData.value ?? []
-    const allRecords = rawRows.map((row: any) => {
-      const values = row.values[0]
-      const record: Record<string, any> = {}
-      COLUMN_MAP.forEach((col, i) => {
-        if (col !== 'col_blank1') record[col] = sanitizeValue(col, values[i])
-      })
-      record.client = clientColumnIndex !== null ? sanitizeValue('client', values[clientColumnIndex]) : null
-      return record
-    })
-
-    const records = allRecords.filter((r) => r.wo !== null && r.wo !== '')
-    const skipped = allRecords.length - records.length
-
-    if (records.length > 0) {
-      const { error } = await supabase.from('work_orders').upsert(records, { onConflict: 'wo' })
-      if (error) {
-        return new Response(JSON.stringify({ step: 'upsert', error, sampleMapped: records[0] }), { status: 500 })
+    // Normal sync: run every configured entity's workbook, independently --
+    // one entity's failure (bad credentials, a renamed table, etc) never
+    // blocks the others from syncing.
+    const results = []
+    for (const source of sources) {
+      let result: Record<string, unknown>
+      try {
+        result = await syncOneSource(source, supabase)
+      } catch (err) {
+        result = { entity: source.entityName, step: 'unhandled', error: errMsg(err) }
       }
+      results.push(result)
+      await supabase
+        .from('entity_work_order_sources')
+        .update({ last_synced_at: new Date().toISOString(), last_sync_result: result })
+        .eq('entity_id', source.entityId)
     }
 
-    return new Response(JSON.stringify({
-      synced: records.length,
-      skipped,
-      clientColumnFound: clientColumn ? clientColumn.name : null,
-      tableColumns: tableColumns.map((c) => c.name),
-    }), {
+    const totalSynced = results.reduce((sum, r: any) => sum + (r.synced ?? 0), 0)
+    const totalSkipped = results.reduce((sum, r: any) => sum + (r.skipped ?? 0), 0)
+
+    return new Response(JSON.stringify({ synced: totalSynced, skipped: totalSkipped, results }), {
       headers: { 'Content-Type': 'application/json' },
     })
   } catch (err) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useEntityScope } from '../contexts/EntityScopeContext'
 import type { WorkOrder } from '../lib/types'
 
 const NUMERIC_FIELDS = new Set(['nte', 'cost', 'profit_pct', 'assessment_fee', 'technicians_count'])
@@ -25,14 +26,17 @@ function normalize(input: Partial<WorkOrder>): Partial<WorkOrder> {
 }
 
 export function useWorkOrders() {
+  const { activeEntityId } = useEntityScope()
   const [wos, setWos] = useState<WorkOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const refetch = useCallback(async () => {
+    if (!activeEntityId) return
     const { data, error: err } = await supabase
       .from('work_orders')
       .select('*')
+      .eq('entity_id', activeEntityId)
       .order('wo_date', { ascending: false })
     if (err) {
       setError(err.message)
@@ -41,7 +45,7 @@ export function useWorkOrders() {
       setError('')
     }
     setLoading(false)
-  }, [])
+  }, [activeEntityId])
 
   useEffect(() => {
     refetch()
@@ -57,14 +61,14 @@ export function useWorkOrders() {
   const saveWO = useCallback(async (input: Partial<WorkOrder>, isNew: boolean) => {
     const payload = normalize(input)
     if (isNew) {
-      const { error: err } = await supabase.from('work_orders').insert(payload)
+      const { error: err } = await supabase.from('work_orders').insert({ ...payload, entity_id: activeEntityId })
       if (err) throw err
     } else {
       const { wo, ...rest } = payload
       const { error: err } = await supabase.from('work_orders').update(rest).eq('wo', wo)
       if (err) throw err
     }
-  }, [])
+  }, [activeEntityId])
 
   const deleteWO = useCallback(async (wo: string) => {
     const { error: err } = await supabase.from('work_orders').delete().eq('wo', wo)
@@ -72,11 +76,11 @@ export function useWorkOrders() {
   }, [])
 
   const importWOs = useCallback(async (rows: Partial<WorkOrder>[]) => {
-    const payload = rows.map(normalize).filter((r) => r.wo)
+    const payload = rows.map(normalize).filter((r) => r.wo).map((r) => ({ ...r, entity_id: activeEntityId }))
     const { data, error: err } = await supabase.from('work_orders').upsert(payload, { onConflict: 'wo' }).select()
     if (err) throw err
     return data
-  }, [])
+  }, [activeEntityId])
 
   return { wos, loading, error, refetch, saveWO, deleteWO, importWOs }
 }
