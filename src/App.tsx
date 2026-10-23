@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutGrid, ClipboardList, Users, Building2, LogOut, BarChart3,
-  Map as MapIcon, FileText, Tags, Phone, Menu, X, Sparkles,
+  Map as MapIcon, FileText, Tags, Phone, Menu, X, Sparkles, ClipboardCheck,
 } from 'lucide-react'
 import { useAuth } from './hooks/useAuth'
 import { useLiveCallCount } from './hooks/useLiveCallCount'
@@ -19,12 +19,14 @@ import { DispatcherView } from './pages/DispatcherView'
 import { MapPage } from './pages/MapPage'
 import { ProposalsPage } from './pages/ProposalsPage'
 import { ProposalDetailPage } from './pages/ProposalDetailPage'
+import { BreakdownPage } from './pages/BreakdownPage'
+import { BreakdownDetailPage } from './pages/BreakdownDetailPage'
 import { PriceListsPage } from './pages/PriceListsPage'
 import { DispatchAgentPage } from './pages/DispatchAgentPage'
 import { AiLearningPage } from './pages/AiLearningPage'
 
-type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
-type DispatcherTab = 'jobs' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
+type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'breakdown' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
+type DispatcherTab = 'jobs' | 'breakdown' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
 
 interface NavEntry<T extends string> {
   key: T
@@ -94,6 +96,7 @@ export default function App() {
     {
       label: 'Sales',
       items: [
+        { key: 'breakdown', label: 'Breakdown', icon: <ClipboardCheck size={17} /> },
         { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
         { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
         { key: 'ai_learning', label: 'AI Learning', icon: <Sparkles size={17} /> },
@@ -119,6 +122,7 @@ export default function App() {
       label: 'Workspace',
       items: [
         { key: 'jobs', label: 'My Jobs', icon: <ClipboardList size={17} /> },
+        { key: 'breakdown', label: 'Breakdown', icon: <ClipboardCheck size={17} /> },
         { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
         { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
         { key: 'ai_learning', label: 'AI Learning', icon: <Sparkles size={17} /> },
@@ -143,11 +147,13 @@ export default function App() {
   const pageContent = isDispatcherOnly ? (
     <Routes location={location}>
       <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
+      <Route path="/breakdown/:id" element={<BreakdownDetailPage />} />
       <Route
         path="*"
         element={
           <>
             {dispatcherTab === 'jobs' && <DispatcherView dispatcherName={profile.dispatcher_name} />}
+            {dispatcherTab === 'breakdown' && <BreakdownPage />}
             {dispatcherTab === 'proposals' && (
               <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
             )}
@@ -162,6 +168,7 @@ export default function App() {
     <Routes location={location}>
       <Route path="/dispatcher/:name" element={<DispatcherDetailPage />} />
       <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
+      <Route path="/breakdown/:id" element={<BreakdownDetailPage />} />
       <Route
         path="*"
         element={
@@ -170,6 +177,7 @@ export default function App() {
             {tab === 'kpi' && <KPIOverviewPage />}
             {tab === 'analytics' && <AnalyticsPage />}
             {tab === 'map' && <MapPage />}
+            {tab === 'breakdown' && <BreakdownPage />}
             {tab === 'proposals' && (
               <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
             )}

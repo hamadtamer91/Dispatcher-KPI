@@ -2,6 +2,20 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { LineItemKind, Proposal, ProposalLineItem, ProposalPhoto } from '../lib/types'
 
+// "Breakdown" check result -- see supabase/functions/audit-proposal. Report
+// -only: nothing here is ever auto-applied to the proposal.
+export type BreakdownSeverity = 'high' | 'medium' | 'low'
+export interface BreakdownFinding {
+  severity: BreakdownSeverity
+  category: string
+  message: string
+}
+export interface BreakdownResult {
+  findings: BreakdownFinding[]
+  overall_assessment: string
+  checked_at: string
+}
+
 /** A single proposal with its line items and photos, plus mutations for the editor page. */
 export function useProposalDetail(id: string | undefined) {
   const [proposal, setProposal] = useState<Proposal | null>(null)
@@ -10,6 +24,7 @@ export function useProposalDetail(id: string | undefined) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
+  const [checkingBreakdown, setCheckingBreakdown] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!id) return
@@ -163,6 +178,41 @@ export function useProposalDetail(id: string | undefined) {
     }
   }, [id, refresh])
 
+  // Runs the read-only "Breakdown" audit (sales tax, EMG/rate-sheet, equal
+  // -hours, narrative-vs-line-items scope) against this proposal exactly as
+  // currently saved. Never writes anything -- the dispatcher applies any fix
+  // by hand in the editor above.
+  const runBreakdownCheck = useCallback(async (): Promise<BreakdownResult> => {
+    if (!id) throw new Error('No proposal to check')
+    setCheckingBreakdown(true)
+    setError(null)
+    try {
+      const { data, error: err } = await supabase.functions.invoke('audit-proposal', {
+        body: { proposal_id: id },
+      })
+      if (err) {
+        let message = err.message
+        try {
+          const ctx = (err as unknown as { context?: Response }).context
+          if (ctx) {
+            const body = await ctx.clone().json()
+            if (body?.error) message = body.error
+          }
+        } catch {
+          // fall back to err.message
+        }
+        throw new Error(message)
+      }
+      if (data?.error) throw new Error(data.error)
+      return data as BreakdownResult
+    } catch (e) {
+      setError((e as Error).message)
+      throw e
+    } finally {
+      setCheckingBreakdown(false)
+    }
+  }, [id])
+
   return {
     proposal,
     lineItems,
@@ -170,6 +220,7 @@ export function useProposalDetail(id: string | undefined) {
     loading,
     error,
     generating,
+    checkingBreakdown,
     refresh,
     updateProposal,
     addLineItem,
@@ -180,5 +231,6 @@ export function useProposalDetail(id: string | undefined) {
     deletePhoto,
     photoUrl,
     generateDraft,
+    runBreakdownCheck,
   }
 }
