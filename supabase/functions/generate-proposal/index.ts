@@ -508,6 +508,21 @@ ${lineItemRules}
       )
     }
 
+    // A response cut off at the token limit lands here as non-empty but
+    // truncated JSON -- JSON.parse would just call that "malformed", which
+    // reads as a transient glitch worth retrying when it's actually not:
+    // retrying the same long notes/photos will truncate again. Catch it by
+    // finishReason first so the error tells the dispatcher what to trim.
+    if (candidate?.finishReason === 'MAX_TOKENS') {
+      return jsonResponse(
+        {
+          error:
+            "The AI's draft ran too long and got cut off (usually from several photos or very long technician notes). Try again after removing a photo or two, or trimming the technician notes.",
+        },
+        502,
+      )
+    }
+
     let draft: Draft
     try {
       draft = JSON.parse(rawText)
@@ -895,7 +910,11 @@ async function callGeminiWithRetry(userParts: unknown[], responseSchema: unknown
           body: JSON.stringify({
             contents: [{ role: 'user', parts: userParts }],
             generationConfig: {
-              maxOutputTokens: 8192,
+              // 8192 was getting cut off on jobs with long technician notes
+              // or several photos, landing as a confusing "malformed JSON"
+              // error (see the MAX_TOKENS check below) -- raised for
+              // headroom on a verbose narrative + line-items JSON response.
+              maxOutputTokens: 16384,
               responseMimeType: 'application/json',
               responseSchema,
             },
