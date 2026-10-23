@@ -321,6 +321,7 @@ Always use kind="part" for a part or material, whether or not it matches the cat
 Do NOT invent parts the job wouldn't plausibly need, and do NOT pad the list with vague filler ("miscellaneous materials," "misc parts") just to have something there -- thoroughness means naming the real consumables the job would use, not adding line items for their own sake.
 If the work described is purely diagnostic/inspection, troubleshooting with no repair performed, a visit where nothing was replaced, or otherwise genuinely required no parts or materials, return ZERO kind="part" line items for this proposal -- never force a parts line onto a job that didn't use any.
 This zero-parts rule only applies when nothing actually needs fixing. It is common for a technician's notes to test one specific component (e.g. a sink, a valve, a fixture), find THAT component fine, but also describe separate damage or a problem nearby that still needs correcting (e.g. water damage to a wall, wear on a surface, a failed seal) -- that is NOT a diagnostic-only visit. Whatever corrective work you go on to describe in narrative_recommendation (repairing, replacing, installing, sealing, etc.) must be fully reflected in your line items, with real labor and parts, exactly as if that were the only job -- a clean test result on one part of the system never excuses leaving the rest of the recommended work unpriced.
+Equipment and service fees are a common, separate case technicians often describe as something they DID rather than something to bill -- don't fold these silently into labor hours. When the notes describe running a drain snake/auger or cable machine, hydro-jetting, a sewer camera inspection, power washing, wet-vacuuming standing water, renting a jackhammer/concrete saw/excavator, or a similar piece of specialized equipment or subcontracted service actually used on the job, add it as its own kind="part" line item (e.g. "Snake Fee," "Hydro Jet Fee," "Camera Inspection Fee," "Power Washing Fee") at a realistic market cost, the same way any other material gets priced -- these are exactly the kind of line item that shows up throughout this trade's real, approved quotes (see the past-outcomes history below), so don't leave one out just because the notes phrase it as an action the technician took rather than a charge.
 `.trim()
 
     const lineItemRules = `- line_items: one per distinct task or material. kind="labor" for people's time (role_name "Technician", "Helper", or a catalog role as described above). kind="part" for any part or material, whether or not it's in the known catalog -- set part_name to the matching catalog name when it matches, and when it doesn't, leave part_name blank and supply suggested_unit_cost instead. kind="other" is only for real non-part, non-labor costs (permits, disposal fees, equipment rental, etc) -- also supply suggested_unit_cost for those.
@@ -952,13 +953,24 @@ function buildOutcomesContext(
 
   // A handful of concrete past jobs -- real scope/narrative, parts, and
   // labor hours -- so the AI can judge complexity, not just read a price.
+  // A manual entry's pasted text is often 1000+ characters (scope, then
+  // Incurred, then Labor, THEN Parts & Materials last) -- a plain leading
+  // slice cuts off long before reaching the parts breakdown, so the AI never
+  // actually sees what equipment/service fees (snake fee, hydro jet fee,
+  // camera fee, etc.) this trade/client typically bills. Pull that section
+  // out explicitly alongside a short scope summary instead of guessing a
+  // single cutoff length.
   const jobExamples = (set: typeof rows, label: string) =>
     set
       .filter((r) => r.detail && r.detail.trim())
       .slice(0, 3)
       .map((r) => {
         const priceNote = r.total_price != null ? `$${r.total_price}` : 'no price logged'
-        return `  - [${label}, ${priceNote}] ${r.detail!.trim().slice(0, 240)}`
+        const detail = r.detail!.trim()
+        const summary = detail.slice(0, 220)
+        const partsMatch = detail.match(/Parts\s*(?:&|and)?\s*Materials?\s*:?[\s\S]{0,280}/i)
+        const partsNote = partsMatch ? ` || ${partsMatch[0].replace(/\s+/g, ' ').trim()}` : ''
+        return `  - [${label}, ${priceNote}] ${summary}${partsNote}`
       })
   const examples = [...jobExamples(approved, 'Approved'), ...jobExamples(pushedBack, 'Rejected/revised')].join('\n')
 
