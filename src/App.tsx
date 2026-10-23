@@ -142,7 +142,7 @@ export default function App() {
 
   const pageContent = isDispatcherOnly ? (
     <Routes location={location}>
-      <Route path="/proposals/:id" element={<ProposalDetailPage />} />
+      <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
       <Route
         path="*"
         element={
@@ -161,7 +161,7 @@ export default function App() {
   ) : (
     <Routes location={location}>
       <Route path="/dispatcher/:name" element={<DispatcherDetailPage />} />
-      <Route path="/proposals/:id" element={<ProposalDetailPage />} />
+      <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
       <Route
         path="*"
         element={

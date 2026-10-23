@@ -5,9 +5,10 @@ import { useProposalDetail } from '../hooks/useProposalDetail'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { useQuoteOutcomes } from '../hooks/useQuoteOutcomes'
 import { useCbreRateCard } from '../hooks/useCbreRateCard'
+import { useClients } from '../hooks/useClients'
 import { exportProposalDocx } from '../lib/exportProposalDocx'
-import { PROPOSAL_STATUS_LABELS, QUOTE_OUTCOME_LABELS } from '../lib/types'
-import type { LineItemKind, ProposalLineItem, ProposalStatus, QuoteOutcomeResult } from '../lib/types'
+import { PROPOSAL_STATUS_LABELS, PROPOSAL_PRIORITY_OPTIONS, QUOTE_OUTCOME_LABELS } from '../lib/types'
+import type { LineItemKind, ProposalLineItem, ProposalPriority, ProposalStatus, QuoteOutcomeResult, Role } from '../lib/types'
 import { Badge, Button } from '../components/ui'
 import type { BadgeVariant } from '../components/ui'
 
@@ -27,7 +28,7 @@ const STATUS_VARIANT: Record<ProposalStatus, BadgeVariant> = {
 // be reachable, so the floor is set below that ceiling instead of above it.
 const MARGIN_FLOOR_PCT = 35
 
-export function ProposalDetailPage() {
+export function ProposalDetailPage({ role }: { role?: Role }) {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const {
@@ -41,7 +42,7 @@ export function ProposalDetailPage() {
     addLineItem,
     updateLineItem,
     deleteLineItem,
-    uploadPhoto,
+    uploadPhotos,
     deletePhoto,
     photoUrl,
     generateDraft,
@@ -49,10 +50,18 @@ export function ProposalDetailPage() {
   const { wos } = useWorkOrders()
   const { outcomes, recordProposalOutcome } = useQuoteOutcomes()
   const { rows: cbreRates } = useCbreRateCard()
+  const { clients, addClient } = useClients()
 
   const [notes, setNotes] = useState('')
   const [clientName, setClientName] = useState('')
   const [tradeName, setTradeName] = useState('')
+  const [city, setCity] = useState('')
+  const [state, setState] = useState('')
+  const [priority, setPriority] = useState<ProposalPriority | ''>('')
+  const [nteApproved, setNteApproved] = useState(false)
+  const [addingClient, setAddingClient] = useState(false)
+  const [newClientName, setNewClientName] = useState('')
+  const [clientErr, setClientErr] = useState('')
   const [technicianRate, setTechnicianRate] = useState('')
   const [helperRate, setHelperRate] = useState('')
   const [flatQuote, setFlatQuote] = useState('')
@@ -66,11 +75,24 @@ export function ProposalDetailPage() {
   const [exporting, setExporting] = useState(false)
   const [genError, setGenError] = useState('')
 
+  // Trades AI Learning (and the CBRE rate card) already recognizes -- this is
+  // exactly what generate-proposal matches against for pricing/approval
+  // likelihood, so the dropdown never offers a trade the AI can't place.
+  const tradeOptions = useMemo(() => {
+    const fromOutcomes = outcomes.map((o) => o.trade).filter((t): t is string => !!t && t.trim() !== '')
+    const fromRateCard = cbreRates.map((r) => r.trade).filter((t): t is string => !!t && t.trim() !== '')
+    return Array.from(new Set([...fromOutcomes, ...fromRateCard])).sort((a, b) => a.localeCompare(b))
+  }, [outcomes, cbreRates])
+
   useEffect(() => {
     if (proposal) {
       setNotes(proposal.technician_notes ?? '')
       setClientName(proposal.client_name ?? '')
       setTradeName(proposal.trade_name ?? '')
+      setCity(proposal.city ?? '')
+      setState(proposal.state ?? '')
+      setPriority((proposal.priority as ProposalPriority) ?? '')
+      setNteApproved(proposal.nte_approved ?? false)
       setTechnicianRate(proposal.technician_rate != null ? String(proposal.technician_rate) : '')
       setHelperRate(proposal.helper_rate != null ? String(proposal.helper_rate) : '')
       setFlatQuote(proposal.technician_flat_quote != null ? String(proposal.technician_flat_quote) : '')
@@ -83,6 +105,10 @@ export function ProposalDetailPage() {
     proposal?.technician_notes,
     proposal?.client_name,
     proposal?.trade_name,
+    proposal?.city,
+    proposal?.state,
+    proposal?.priority,
+    proposal?.nte_approved,
     proposal?.technician_rate,
     proposal?.helper_rate,
     proposal?.technician_flat_quote,
@@ -90,6 +116,21 @@ export function ProposalDetailPage() {
     proposal?.assessment_fee,
     proposal?.markup_pct,
   ])
+
+  const handleAddClient = async () => {
+    setClientErr('')
+    try {
+      const created = await addClient(newClientName)
+      if (created) {
+        setClientName(created.name)
+        await updateProposal({ client_name: created.name })
+      }
+      setNewClientName('')
+      setAddingClient(false)
+    } catch (e) {
+      setClientErr((e as Error).message)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -236,36 +277,138 @@ export function ProposalDetailPage() {
       <div className="panel p-5 space-y-4">
         <div>
           <label className="text-sm font-bold text-ink">Client Name</label>
-          <input
-            type="text"
-            value={clientName}
-            onChange={(e) => setClientName(e.target.value)}
-            onBlur={() => updateProposal({ client_name: clientName.trim() || null })}
-            disabled={isLocked}
-            placeholder={workOrder?.client ? `Defaults to "${workOrder.client}" from the work order` : 'e.g. CBRE -- Store #1234'}
-            className="field mt-1"
-          />
+          <div className="flex items-center gap-2 mt-1">
+            <select
+              value={clientName}
+              onChange={(e) => {
+                setClientName(e.target.value)
+                updateProposal({ client_name: e.target.value || null })
+              }}
+              disabled={isLocked}
+              className="field flex-1"
+            >
+              <option value="">
+                {workOrder?.client ? `Use work order's client ("${workOrder.client}")` : 'Select client...'}
+              </option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.name}>{c.name}</option>
+              ))}
+            </select>
+            {role === 'super_admin' && !isLocked && (
+              <button
+                type="button"
+                onClick={() => setAddingClient((v) => !v)}
+                className="btn-icon shrink-0"
+                title="Add new client"
+              >
+                <Plus size={14} />
+              </button>
+            )}
+          </div>
+          {addingClient && (
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="text"
+                autoFocus
+                value={newClientName}
+                onChange={(e) => setNewClientName(e.target.value)}
+                placeholder="New client name"
+                className="field flex-1"
+              />
+              <Button size="sm" onClick={handleAddClient}>Add</Button>
+            </div>
+          )}
+          {clientErr && <p className="text-xs text-danger mt-1">{clientErr}</p>}
           <p className="text-xs text-ink-faint mt-1">
-            Tells the AI who this proposal is for. Leave blank to use the work order's client automatically.
+            Tells the AI who this proposal is for. Leave on "{workOrder?.client ? 'use work order\'s client' : 'Select client...'}" to use
+            the work order's client automatically{role === 'super_admin' ? ' -- only a Super Admin can add a new client to this list.' : '.'}
           </p>
         </div>
 
         <div>
           <label className="text-sm font-bold text-ink">Trade</label>
-          <input
-            type="text"
+          <select
             value={tradeName}
-            onChange={(e) => setTradeName(e.target.value)}
-            onBlur={() => updateProposal({ trade_name: tradeName.trim() || null })}
+            onChange={(e) => {
+              setTradeName(e.target.value)
+              updateProposal({ trade_name: e.target.value || null })
+            }}
             disabled={isLocked}
-            placeholder={workOrder?.trade ? `Defaults to "${workOrder.trade}" from the work order` : 'e.g. Plumbing, Electrical, HVAC'}
             className="field mt-1"
-          />
+          >
+            <option value="">
+              {workOrder?.trade ? `Use work order's trade ("${workOrder.trade}")` : 'Select trade...'}
+            </option>
+            {tradeOptions.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
           <p className="text-xs text-ink-faint mt-1">
-            Set this when the job's work order isn't in the Work Orders table yet or has no trade filled in there -- it's what AI
-            Learning matches against for pricing and approval-likelihood, so use the exact same spelling as your other AI Learning
-            entries for this trade (e.g. always "Plumbing", not "Plumbin"). Leave blank to use the work order's trade automatically.
+            Pulled from AI Learning (and the CBRE rate card) so it's exactly what the AI matches pricing and approval-likelihood
+            against. A trade shows up here once it's been used in an AI Learning entry -- log one from the AI Learning page if the
+            trade you need isn't listed yet.
           </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-bold text-ink">City</label>
+            <input
+              type="text"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              onBlur={() => updateProposal({ city: city.trim() || null })}
+              disabled={isLocked}
+              placeholder={workOrder?.city ? `Defaults to "${workOrder.city}" from the work order` : 'City'}
+              className="field mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-bold text-ink">State</label>
+            <input
+              type="text"
+              value={state}
+              onChange={(e) => setState(e.target.value)}
+              onBlur={() => updateProposal({ state: state.trim() || null })}
+              disabled={isLocked}
+              placeholder={workOrder?.state ? `Defaults to "${workOrder.state}" from the work order` : 'State'}
+              className="field mt-1"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 items-end">
+          <div>
+            <label className="text-sm font-bold text-ink">Priority</label>
+            <select
+              value={priority}
+              onChange={(e) => {
+                const next = (e.target.value || '') as ProposalPriority | ''
+                setPriority(next)
+                updateProposal({ priority: next || null })
+              }}
+              disabled={isLocked}
+              className="field mt-1"
+            >
+              <option value="">Not set</option>
+              {PROPOSAL_PRIORITY_OPTIONS.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm font-semibold text-ink pb-2">
+            <input
+              type="checkbox"
+              checked={nteApproved}
+              onChange={(e) => {
+                setNteApproved(e.target.checked)
+                updateProposal({ nte_approved: e.target.checked })
+              }}
+              disabled={isLocked}
+              className="h-4 w-4 rounded border-line"
+            />
+            NTE Approved
+          </label>
         </div>
 
         <div>
@@ -425,18 +568,19 @@ export function ProposalDetailPage() {
             <label className="text-sm font-bold text-ink">Photos</label>
             {!isLocked && (
               <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 hover:text-brand-800 cursor-pointer">
-                <Upload size={13} /> {uploading ? 'Uploading...' : 'Add photo'}
+                <Upload size={13} /> {uploading ? 'Uploading...' : 'Add photos'}
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   className="hidden"
                   disabled={uploading}
                   onChange={async (e) => {
-                    const file = e.target.files?.[0]
-                    if (!file) return
+                    const files = Array.from(e.target.files ?? [])
+                    if (files.length === 0) return
                     setUploading(true)
                     try {
-                      await uploadPhoto(file)
+                      await uploadPhotos(files)
                     } finally {
                       setUploading(false)
                       e.target.value = ''

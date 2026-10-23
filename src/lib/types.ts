@@ -23,6 +23,16 @@ export interface Entity {
   created_at?: string
 }
 
+// A managed client in the active entity's catalog -- the Proposal's Client
+// Name dropdown is populated from this (super_admin-only to add).
+export interface Client {
+  id: string
+  entity_id: string
+  name: string
+  active: boolean
+  created_at?: string
+}
+
 export interface WorkOrder {
   wo: string
   dispatcher: string | null
@@ -70,6 +80,10 @@ export interface WorkOrder {
 // ---- Proposal Builder ----
 
 export type ProposalStatus = 'draft' | 'ai_generated' | 'in_review' | 'approved' | 'sent'
+
+// Response/completion-time commitment for a proposal's job.
+export type ProposalPriority = '4 Hours' | '8 Hours' | '24 Hours' | '48 Hours' | '72 Hours'
+export const PROPOSAL_PRIORITY_OPTIONS: ProposalPriority[] = ['4 Hours', '8 Hours', '24 Hours', '48 Hours', '72 Hours']
 
 export const PROPOSAL_STATUS_LABELS: Record<ProposalStatus, string> = {
   draft: 'Draft',
@@ -162,6 +176,17 @@ export interface Proposal {
   // trade set. Falls back to the work order's trade in the UI and the AI
   // prompt when this is empty.
   trade_name: string | null
+  // Job location, lifted from the work order when first set here -- kept on
+  // the proposal itself so it still has it even if the work order isn't in
+  // the Work Orders table yet or gets edited later.
+  city: string | null
+  state: string | null
+  // Response/completion window the client committed to for this job.
+  priority: ProposalPriority | null
+  // Whether the quoted price fits within the client's Not-To-Exceed ceiling
+  // for this proposal specifically (separate from a work order's own
+  // nte_approved, which is about the work order's NTE, not this quote).
+  nte_approved: boolean | null
   version: number
   status: ProposalStatus
   markup_pct: number

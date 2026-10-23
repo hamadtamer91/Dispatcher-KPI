@@ -79,7 +79,7 @@ export function useProposalDetail(id: string | undefined) {
   )
 
   const uploadPhoto = useCallback(
-    async (file: File, caption?: string) => {
+    async (file: File, caption?: string, sortOrderOverride?: number) => {
       if (!id) return
       const ext = file.name.split('.').pop() || 'jpg'
       const path = `${id}/${crypto.randomUUID()}.${ext}`
@@ -90,13 +90,29 @@ export function useProposalDetail(id: string | undefined) {
         proposal_id: id,
         storage_path: path,
         caption: caption ?? null,
-        sort_order: photos.length,
+        sort_order: sortOrderOverride ?? photos.length,
         uploaded_by: userData?.user?.id ?? null,
       })
       if (insErr) throw insErr
       await refresh()
     },
     [id, photos.length, refresh],
+  )
+
+  /** Uploads several photos at a time, one after another, each keeping its
+   *  place after whatever's already there -- for the bulk "Add photos"
+   *  picker. Stops at the first failure but reports how many made it in. */
+  const uploadPhotos = useCallback(
+    async (files: File[]) => {
+      const baseOrder = photos.length
+      let uploaded = 0
+      for (let i = 0; i < files.length; i++) {
+        await uploadPhoto(files[i], undefined, baseOrder + i)
+        uploaded++
+      }
+      return uploaded
+    },
+    [photos.length, uploadPhoto],
   )
 
   const deletePhoto = useCallback(
@@ -160,6 +176,7 @@ export function useProposalDetail(id: string | undefined) {
     updateLineItem,
     deleteLineItem,
     uploadPhoto,
+    uploadPhotos,
     deletePhoto,
     photoUrl,
     generateDraft,
