@@ -52,7 +52,23 @@ export function ManageUsersPage() {
         },
         headers: { Authorization: `Bearer ${session?.access_token ?? ''}` },
       })
-      if (error) throw error
+      if (error) {
+        // supabase-js only parses the response body into `data` on a 2xx --
+        // on a non-2xx it just gives this generic error and leaves the
+        // function's real message (entityId missing, duplicate email,
+        // caller not super_admin, etc) sitting unread on error.context.
+        let message = error.message
+        try {
+          const ctx = (error as unknown as { context?: Response }).context
+          if (ctx) {
+            const body = await ctx.clone().json()
+            if (body?.error) message = body.error
+          }
+        } catch {
+          // fall back to error.message
+        }
+        throw new Error(message)
+      }
       if (data?.error) throw new Error(data.error)
       setMsg({ success: `User "${form.displayName}" created.` })
       setForm({ ...DEFAULT_FORM, entityId: activeEntityId })
