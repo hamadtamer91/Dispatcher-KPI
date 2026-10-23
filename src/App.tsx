@@ -20,6 +20,7 @@ import { MapPage } from './pages/MapPage'
 import { ProposalsPage } from './pages/ProposalsPage'
 import { ProposalDetailPage } from './pages/ProposalDetailPage'
 import { BreakdownPage } from './pages/BreakdownPage'
+import { BreakdownPastePage } from './pages/BreakdownPastePage'
 import { BreakdownDetailPage } from './pages/BreakdownDetailPage'
 import { PriceListsPage } from './pages/PriceListsPage'
 import { DispatchAgentPage } from './pages/DispatchAgentPage'
@@ -147,6 +148,7 @@ export default function App() {
   const pageContent = isDispatcherOnly ? (
     <Routes location={location}>
       <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
+      <Route path="/breakdown/paste" element={<BreakdownPastePage />} />
       <Route path="/breakdown/:id" element={<BreakdownDetailPage />} />
       <Route
         path="*"
@@ -168,6 +170,7 @@ export default function App() {
     <Routes location={location}>
       <Route path="/dispatcher/:name" element={<DispatcherDetailPage />} />
       <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
+      <Route path="/breakdown/paste" element={<BreakdownPastePage />} />
       <Route path="/breakdown/:id" element={<BreakdownDetailPage />} />
       <Route
         path="*"

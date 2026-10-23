@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom'
+import { Plus } from 'lucide-react'
 import { useProposals } from '../hooks/useProposals'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { PROPOSAL_STATUS_LABELS } from '../lib/types'
 import type { ProposalStatus } from '../lib/types'
-import { Badge, EmptyState, PageHeader } from '../components/ui'
+import { Badge, Button, EmptyState, PageHeader } from '../components/ui'
 import type { BadgeVariant } from '../components/ui'
 
 const STATUS_VARIANT: Record<ProposalStatus, BadgeVariant> = {
@@ -31,6 +32,11 @@ export function BreakdownPage() {
       <PageHeader
         title="Breakdown"
         description="Pick a proposal that already has a narrative to double-check its pricing, tax, and whether the parts/labor actually match what the narrative describes."
+        actions={
+          <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => navigate('/breakdown/paste')}>
+            Paste a Proposal
+          </Button>
+        }
       />
       {error && <p className="text-sm text-danger">{error}</p>}
 
