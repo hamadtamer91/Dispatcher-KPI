@@ -13,6 +13,10 @@ export interface BreakdownFinding {
 export interface BreakdownResult {
   findings: BreakdownFinding[]
   overall_assessment: string
+  // Which AI Learning (quote_outcomes) history the pricing-risk check was
+  // actually run against, surfaced so it's visible that it ran rather than
+  // just trusted -- see fetchOutcomeContext in the edge function.
+  ai_learning?: { scope_label: string; outcomes_considered: number }
   checked_at: string
 }
 

@@ -35,10 +35,17 @@ interface AuditTextResult {
   subtotal_before: number
   subtotal_after: number
   overall_assessment: string
+  ai_learning?: { scope_label: string; outcomes_considered: number }
   checked_at: string
 }
 
 const SEVERITY_VARIANT: Record<Severity, BadgeVariant> = { high: 'danger', medium: 'warn', low: 'neutral' }
+const CATEGORY_LABELS: Record<string, string> = {
+  nte: 'NTE',
+  scope_mismatch: 'Scope vs. Line Items',
+  pricing_risk: 'Pricing vs. History',
+  other: 'Other',
+}
 
 /** The "paste it in" sibling of the Breakdown picker -- for a proposal that
  *  was never entered into this app. The dispatcher pastes the narrative +
@@ -68,6 +75,7 @@ export function BreakdownPastePage() {
   const [city, setCity] = useState('')
   const [state, setState] = useState('')
   const [priority, setPriority] = useState<ProposalPriority | ''>('')
+  const [nte, setNte] = useState('')
   const [proposalText, setProposalText] = useState('')
 
   const [checking, setChecking] = useState(false)
@@ -94,6 +102,7 @@ export function BreakdownPastePage() {
           city: city.trim() || null,
           state: state.trim() || null,
           priority: priority || null,
+          nte: nte.trim() ? Number(nte) : null,
           proposal_text: proposalText,
         },
       })
@@ -203,6 +212,17 @@ export function BreakdownPastePage() {
               ))}
             </select>
           </div>
+          <div>
+            <label className="text-sm font-bold text-ink">NTE ($)</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              value={nte}
+              onChange={(e) => setNte(e.target.value)}
+              placeholder="Client's Not-To-Exceed"
+              className="field mt-1 w-full"
+            />
+          </div>
         </div>
 
         <div>
@@ -303,10 +323,18 @@ export function BreakdownPastePage() {
                 {result.scope_findings.map((f, i) => (
                   <li key={i} className="flex items-start gap-2.5 rounded-lg border border-line bg-canvas p-3">
                     <Badge variant={SEVERITY_VARIANT[f.severity]}>{f.severity.toUpperCase()}</Badge>
-                    <p className="text-sm text-ink flex-1">{f.message}</p>
+                    <div className="space-y-0.5 flex-1">
+                      <span className="text-xs font-semibold text-ink-faint">{CATEGORY_LABELS[f.category] ?? f.category}</span>
+                      <p className="text-sm text-ink">{f.message}</p>
+                    </div>
                   </li>
                 ))}
               </ul>
+            )}
+            {result.ai_learning && result.ai_learning.outcomes_considered > 0 && (
+              <p className="text-xs text-ink-faint">
+                Checked against {result.ai_learning.outcomes_considered} historical AI Learning outcomes ({result.ai_learning.scope_label}).
+              </p>
             )}
           </Panel>
         </>

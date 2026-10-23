@@ -25,10 +25,12 @@ const SEVERITY_VARIANT: Record<BreakdownSeverity, BadgeVariant> = {
 
 const CATEGORY_LABELS: Record<string, string> = {
   totals: 'Totals',
+  nte: 'NTE',
   tax: 'Sales Tax',
   rate_sheet: 'Rate Sheet',
   equal_hours: 'Equal Hours',
   scope_mismatch: 'Scope vs. Line Items',
+  pricing_risk: 'Pricing vs. History',
   other: 'Other',
 }
 
@@ -47,6 +49,7 @@ export function BreakdownDetailPage() {
 
   const wo = wos.find((w) => w.wo === proposal?.wo)
   const subtotal = lineItems.reduce((s, li) => s + li.quantity * li.unit_price, 0)
+  const overNte = proposal?.nte != null && subtotal > Number(proposal.nte) + 0.01
 
   const handleRunCheck = async () => {
     setCheckError('')
@@ -100,6 +103,19 @@ export function BreakdownDetailPage() {
             value={<Badge variant={STATUS_VARIANT[proposal.status]}>{PROPOSAL_STATUS_LABELS[proposal.status]}</Badge>}
           />
           <Field label="Current Total" value={`$${subtotal.toFixed(2)}`} />
+          <Field
+            label="NTE"
+            value={
+              proposal.nte != null ? (
+                <span className={overNte ? 'text-danger' : undefined}>
+                  ${Number(proposal.nte).toFixed(2)}
+                  {overNte && ' — over!'}
+                </span>
+              ) : (
+                '(not set)'
+              )
+            }
+          />
         </div>
       </Panel>
 
@@ -180,7 +196,11 @@ export function BreakdownDetailPage() {
               </ul>
             )}
             <p className="text-xs text-ink-faint">
-              Checked {new Date(result.checked_at).toLocaleString()}. Fix anything flagged in the Proposal Editor, then run the check again.
+              Checked {new Date(result.checked_at).toLocaleString()}
+              {result.ai_learning && result.ai_learning.outcomes_considered > 0
+                ? ` against ${result.ai_learning.outcomes_considered} historical AI Learning outcomes (${result.ai_learning.scope_label})`
+                : ''}
+              . Fix anything flagged in the Proposal Editor, then run the check again.
             </p>
           </div>
         )}
