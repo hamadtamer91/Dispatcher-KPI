@@ -16,9 +16,15 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //      applied in code, but here they MUTATE the parsed line items instead
 //      of just flagging a mismatch, since there's no saved proposal for the
 //      dispatcher to go edit by hand -- the fixed breakdown IS the output.
-//   3. NTE -- if the dispatcher gave a Not-To-Exceed ceiling, the corrected
-//      total is checked against it deterministically. Over-NTE is flagged,
-//      never auto-cut, since choosing what to trim needs a human call.
+//      If the dispatcher gave a Not-To-Exceed ceiling, a fix is only
+//      auto-applied when the result stays at-or-under it; a fix that would
+//      cross the NTE is left unapplied and flagged instead, since crossing
+//      it needs a human call (get approval, or trim something else), never
+//      a silent auto-fix. A fix that only lowers the total always goes
+//      through.
+//   3. NTE status -- if, even after that, the total is still over the
+//      client's NTE (it was already over before any fixing, say), that's
+//      flagged too.
 //   4. An AI (Gemini) read of whether the (corrected) line items actually
 //      match the narrative's scope, PLUS -- using the same AI Learning
 //      history (quote_outcomes) generate-proposal pricing calibrates
@@ -171,15 +177,35 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       unit_price: Number(li.unit_price) || 0,
     }))
 
-    // ---- Stage 2: deterministic GMN fixes, mutating a working copy. ----
+    // ---- Stage 2: deterministic GMN fixes, mutating a working copy. A fix
+    // that would INCREASE the total is checked against the client's NTE
+    // first -- if applying it would push the breakdown over that ceiling,
+    // it's left unapplied and flagged instead, since crossing the NTE needs
+    // a human decision (get approval, or find something else to trim), not
+    // a silent auto-fix. A fix that only lowers the total (removing tax
+    // that doesn't apply, correcting an over-charged rate) always goes
+    // through -- it can only help stay under NTE, never push it over. ----
     const corrected: CorrectedLineItem[] = originalItems.map((li) => ({ ...li, changed: false, note: null }))
     const fixesApplied: { category: string; message: string }[] = []
+    const findings: { severity: Severity; category: string; message: string }[] = []
+    const nte = body.nte != null && !Number.isNaN(Number(body.nte)) ? Number(body.nte) : null
 
     const isGmn = body.entity_id === GMN_ENTITY_ID
     const isEmg = !!body.priority && GMN_EMG_PRIORITIES.has(body.priority)
     const stateKey = (body.state ?? '').trim().toUpperCase()
 
     const roleMatches = (li: CorrectedLineItem, re: RegExp) => re.test(li.role_name ?? '') || re.test(li.description ?? '')
+    const currentTotal = () => round2(corrected.reduce((s, li) => s + li.quantity * li.unit_price, 0))
+    // A delta that lowers (or doesn't change) the total always fits. A
+    // delta that raises it only fits if the result stays at-or-under NTE
+    // (or there's no NTE set to check against).
+    const fitsUnderNte = (delta: number) => {
+      if (nte == null || nte <= 0 || delta <= 0.005) return true
+      return round2(currentTotal() + delta) <= nte + 0.01
+    }
+    const withheldForNte = (message: string) => {
+      findings.push({ severity: 'high', category: 'nte', message })
+    }
 
     if (isGmn) {
       const { data: laborRates } = await supabase
@@ -194,10 +220,15 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       const tripIdx = corrected.findIndex((li) => roleMatches(li, /trip/i))
       if (tripIdx >= 0) {
         const expectedTrip = isEmg ? 112.5 : 75
-        if (Math.abs(corrected[tripIdx].unit_price - expectedTrip) > 0.005) {
-          const before = corrected[tripIdx].unit_price
-          corrected[tripIdx] = { ...corrected[tripIdx], unit_price: expectedTrip, changed: true, note: `Trip Fee corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate, one trip per job).` }
-          fixesApplied.push({ category: 'rate_sheet', message: corrected[tripIdx].note! })
+        const before = corrected[tripIdx].unit_price
+        if (Math.abs(before - expectedTrip) > 0.005) {
+          const delta = round2(corrected[tripIdx].quantity * (expectedTrip - before))
+          if (fitsUnderNte(delta)) {
+            corrected[tripIdx] = { ...corrected[tripIdx], unit_price: expectedTrip, changed: true, note: `Trip Fee corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate, one trip per job).` }
+            fixesApplied.push({ category: 'rate_sheet', message: corrected[tripIdx].note! })
+          } else {
+            withheldForNte(`Trip Fee should be corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+          }
         }
       }
 
@@ -206,35 +237,61 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       const tradeRate = tradeName ? findRate(isEmg ? `${tradeName} (EMG)` : tradeName) : undefined
       if (tradeRate) {
         const techIdx = corrected.findIndex((li) => li.kind === 'labor' && !roleMatches(li, /helper/i) && !roleMatches(li, /trip/i) && !roleMatches(li, /assess/i))
-        if (techIdx >= 0 && Math.abs(corrected[techIdx].unit_price - tradeRate.hourly_cost) > 0.005) {
+        if (techIdx >= 0) {
           const before = corrected[techIdx].unit_price
-          corrected[techIdx] = { ...corrected[techIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `${tradeName} labor rate corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate).` }
-          fixesApplied.push({ category: 'rate_sheet', message: corrected[techIdx].note! })
+          if (Math.abs(before - tradeRate.hourly_cost) > 0.005) {
+            const delta = round2(corrected[techIdx].quantity * (tradeRate.hourly_cost - before))
+            if (fitsUnderNte(delta)) {
+              corrected[techIdx] = { ...corrected[techIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `${tradeName} labor rate corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate).` }
+              fixesApplied.push({ category: 'rate_sheet', message: corrected[techIdx].note! })
+            } else {
+              withheldForNte(`${tradeName} labor should be corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+            }
+          }
         }
         const assessIdx = corrected.findIndex((li) => roleMatches(li, /assess/i))
-        if (assessIdx >= 0 && Math.abs(corrected[assessIdx].unit_price - tradeRate.hourly_cost) > 0.005) {
+        if (assessIdx >= 0) {
           const before = corrected[assessIdx].unit_price
-          corrected[assessIdx] = { ...corrected[assessIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `Assessment Fee corrected from $${before.toFixed(2)} to $${tradeRate.hourly_cost} (1 hour of ${tradeName}'s labor rate).` }
-          fixesApplied.push({ category: 'rate_sheet', message: corrected[assessIdx].note! })
+          if (Math.abs(before - tradeRate.hourly_cost) > 0.005) {
+            const delta = round2(corrected[assessIdx].quantity * (tradeRate.hourly_cost - before))
+            if (fitsUnderNte(delta)) {
+              corrected[assessIdx] = { ...corrected[assessIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `Assessment Fee corrected from $${before.toFixed(2)} to $${tradeRate.hourly_cost} (1 hour of ${tradeName}'s labor rate).` }
+              fixesApplied.push({ category: 'rate_sheet', message: corrected[assessIdx].note! })
+            } else {
+              withheldForNte(`Assessment Fee should be corrected from $${before.toFixed(2)} to $${tradeRate.hourly_cost} (1 hour of ${tradeName}'s labor rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+            }
+          }
         }
       }
 
       // -- Helper rate + equal hours --
       const helperRate = findRate(isEmg ? 'Helper (EMG)' : 'Helper')
       const helperIdx = corrected.findIndex((li) => roleMatches(li, /helper/i))
-      if (helperIdx >= 0 && helperRate && Math.abs(corrected[helperIdx].unit_price - helperRate.hourly_cost) > 0.005) {
+      if (helperIdx >= 0 && helperRate) {
         const before = corrected[helperIdx].unit_price
-        corrected[helperIdx] = { ...corrected[helperIdx], unit_price: helperRate.hourly_cost, changed: true, note: `Helper rate corrected from $${before.toFixed(2)}/hr to $${helperRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate).` }
-        fixesApplied.push({ category: 'rate_sheet', message: corrected[helperIdx].note! })
+        if (Math.abs(before - helperRate.hourly_cost) > 0.005) {
+          const delta = round2(corrected[helperIdx].quantity * (helperRate.hourly_cost - before))
+          if (fitsUnderNte(delta)) {
+            corrected[helperIdx] = { ...corrected[helperIdx], unit_price: helperRate.hourly_cost, changed: true, note: `Helper rate corrected from $${before.toFixed(2)}/hr to $${helperRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate).` }
+            fixesApplied.push({ category: 'rate_sheet', message: corrected[helperIdx].note! })
+          } else {
+            withheldForNte(`Helper rate should be corrected from $${before.toFixed(2)}/hr to $${helperRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+          }
+        }
       }
       const techIdxForHours = corrected.findIndex((li) => li.kind === 'labor' && !roleMatches(li, /helper/i) && !roleMatches(li, /trip/i) && !roleMatches(li, /assess/i))
       if (helperIdx >= 0 && techIdxForHours >= 0) {
         const techHours = corrected[techIdxForHours].quantity
         const helperHours = corrected[helperIdx].quantity
         if (techHours > 0 && Math.abs(techHours - helperHours) > 0.01) {
-          const note = `Helper hours corrected from ${helperHours}hr to ${techHours}hr to match the technician -- GMN's rule is every tech and helper on site gets the same hours.`
-          corrected[helperIdx] = { ...corrected[helperIdx], quantity: techHours, changed: true, note: corrected[helperIdx].note ? `${corrected[helperIdx].note} ${note}` : note }
-          fixesApplied.push({ category: 'equal_hours', message: note })
+          const delta = round2((techHours - helperHours) * corrected[helperIdx].unit_price)
+          if (fitsUnderNte(delta)) {
+            const note = `Helper hours corrected from ${helperHours}hr to ${techHours}hr to match the technician -- GMN's rule is every tech and helper on site gets the same hours.`
+            corrected[helperIdx] = { ...corrected[helperIdx], quantity: techHours, changed: true, note: corrected[helperIdx].note ? `${corrected[helperIdx].note} ${note}` : note }
+            fixesApplied.push({ category: 'equal_hours', message: note })
+          } else {
+            withheldForNte(`Helper hours should be corrected from ${helperHours}hr to ${techHours}hr to match the technician, but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+          }
         }
       }
 
@@ -249,15 +306,24 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
         if (rate != null && rate > 0) {
           const expectedTax = round2(preTaxSubtotal * rate)
           if (taxIdx >= 0) {
-            if (Math.abs(corrected[taxIdx].unit_price - expectedTax) > 0.02) {
-              const before = corrected[taxIdx].unit_price
-              corrected[taxIdx] = { ...corrected[taxIdx], quantity: 1, unit_price: expectedTax, changed: true, note: `Sales Tax corrected from $${before.toFixed(2)} to $${expectedTax.toFixed(2)} (${stateKey} ${(rate * 100).toFixed(2)}% avg. combined rate on the $${preTaxSubtotal.toFixed(2)} pre-tax subtotal).` }
-              fixesApplied.push({ category: 'tax', message: corrected[taxIdx].note! })
+            const before = corrected[taxIdx].unit_price
+            if (Math.abs(before - expectedTax) > 0.02) {
+              const delta = round2(expectedTax - before)
+              if (fitsUnderNte(delta)) {
+                corrected[taxIdx] = { ...corrected[taxIdx], quantity: 1, unit_price: expectedTax, changed: true, note: `Sales Tax corrected from $${before.toFixed(2)} to $${expectedTax.toFixed(2)} (${stateKey} ${(rate * 100).toFixed(2)}% avg. combined rate on the $${preTaxSubtotal.toFixed(2)} pre-tax subtotal).` }
+                fixesApplied.push({ category: 'tax', message: corrected[taxIdx].note! })
+              } else {
+                withheldForNte(`Sales Tax should be corrected from $${before.toFixed(2)} to $${expectedTax.toFixed(2)} (${stateKey} ${(rate * 100).toFixed(2)}% avg. combined rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+              }
             }
           } else if (expectedTax > 0) {
-            const note = `Added a Sales Tax line of $${expectedTax.toFixed(2)} (${stateKey} ${(rate * 100).toFixed(2)}% avg. combined rate) -- O'Reilly/Bob Evans jobs always get sales tax and this proposal was missing it.`
-            corrected.push({ kind: 'other', description: `Sales Tax (${stateKey}, ${(rate * 100).toFixed(2)}% avg. combined rate)`, quantity: 1, unit_price: expectedTax, changed: true, note })
-            fixesApplied.push({ category: 'tax', message: note })
+            if (fitsUnderNte(expectedTax)) {
+              const note = `Added a Sales Tax line of $${expectedTax.toFixed(2)} (${stateKey} ${(rate * 100).toFixed(2)}% avg. combined rate) -- O'Reilly/Bob Evans jobs always get sales tax and this proposal was missing it.`
+              corrected.push({ kind: 'other', description: `Sales Tax (${stateKey}, ${(rate * 100).toFixed(2)}% avg. combined rate)`, quantity: 1, unit_price: expectedTax, changed: true, note })
+              fixesApplied.push({ category: 'tax', message: note })
+            } else {
+              withheldForNte(`A Sales Tax line of $${expectedTax.toFixed(2)} (${stateKey} ${(rate * 100).toFixed(2)}% avg. combined rate) should be added -- O'Reilly/Bob Evans jobs always get sales tax -- but that would push the total over the client's NTE of $${nte!.toFixed(2)}. Left off for now; get NTE approval, then run the check again to add it.`)
+            }
           }
         } else if (rate == null) {
           fixesApplied.push({ category: 'tax', message: `Couldn't verify sales tax -- "${body.state || '(blank)'}" isn't a recognized 2-letter state code. Set a valid State and check again.` })
@@ -272,12 +338,13 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
     }
 
     const subtotalBefore = round2(originalItems.reduce((s, li) => s + li.quantity * li.unit_price, 0))
-    const subtotalAfter = round2(corrected.reduce((s, li) => s + li.quantity * li.unit_price, 0))
+    const subtotalAfter = currentTotal()
 
-    // ---- Stage 3: NTE -- deterministic, flagged rather than auto-cut
-    // since choosing what to trim needs a human call. ----
-    const findings: { severity: Severity; category: string; message: string }[] = []
-    const nte = body.nte != null && !Number.isNaN(Number(body.nte)) ? Number(body.nte) : null
+    // ---- Stage 3: final NTE status. The fixes above already stop short of
+    // crossing the NTE on their own (see fitsUnderNte), so this only fires
+    // when the breakdown was already over NTE before any fixing, or still
+    // is after removing whatever could safely be removed (e.g. tax that
+    // doesn't apply here). ----
     if (nte != null && nte > 0 && subtotalAfter > nte + 0.01) {
       findings.push({
         severity: 'high',
