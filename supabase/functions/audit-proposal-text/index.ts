@@ -128,7 +128,11 @@ Deno.serve(async (req) => {
                 description: 'Labor lines only: "Technician", "Helper", "Trip Fee", or "Assessment Fee" if that\'s what the line is, else the stated trade (e.g. "Plumber"). Empty for parts/other.',
               },
               quantity: { type: 'NUMBER', description: 'Hours for labor, count for parts/other. Default 1 if not stated.' },
-              unit_price: { type: 'NUMBER', description: 'The price AS WRITTEN in the text for one unit/hour -- do not calculate or correct anything here, just extract it.' },
+              unit_price: {
+                type: 'NUMBER',
+                description:
+                  'The price for ONE unit/hour. If the text gives a single dollar figure next to a quantity greater than 1 (e.g. "Breakers x2: $115.98"), that figure is the TOTAL for all of them -- divide by the quantity to get this per-unit price (so "x2: $115.98" means unit_price 57.99, not 115.98). If the text already states a per-unit/per-hour rate (e.g. "$95/hr", "$57.99 each"), use that number directly. Do not otherwise calculate or correct anything, just extract/derive this one number.',
+              },
             },
             required: ['kind', 'description', 'quantity', 'unit_price'],
           },
@@ -151,7 +155,7 @@ Pasted proposal text:
 ${proposalText}
 """
 
-Pull out the narrative (scope of work, and findings/recommendation if those are written separately), and every billed line item with its kind (labor/part/other), description, role (Technician/Helper/Trip Fee/Assessment Fee/trade name for labor lines), quantity, and the unit price exactly as stated in the text. If a total or subtotal is written, ignore it -- only extract the individual line items.
+Pull out the narrative (scope of work, and findings/recommendation if those are written separately), and every billed line item with its kind (labor/part/other), description, role (Technician/Helper/Trip Fee/Assessment Fee/trade name for labor lines), quantity, and the unit price. Watch for a common shorthand: "Description xN: $amount" means $amount is the TOTAL for all N units/hours, not the price of one -- in that case the unit price is $amount divided by N. If a total or subtotal is written at the end of the proposal, ignore it -- only extract the individual line items.
 `.trim()
 
     const parseRes = await callGeminiWithRetry([{ text: parsePrompt }], parseSchema)
