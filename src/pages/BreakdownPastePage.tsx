@@ -44,6 +44,7 @@ const SEVERITY_VARIANT: Record<Severity, BadgeVariant> = { high: 'danger', mediu
 const CATEGORY_LABELS: Record<string, string> = {
   nte: 'NTE',
   scope_mismatch: 'Scope vs. Line Items',
+  parts_pricing: 'Parts vs. Price List',
   pricing_risk: 'Pricing vs. History',
   other: 'Other',
 }
@@ -59,7 +60,7 @@ const CATEGORY_LABELS: Record<string, string> = {
  *  Nothing here is saved anywhere. */
 export function BreakdownPastePage() {
   const navigate = useNavigate()
-  const { activeEntityId } = useEntityScope()
+  const { activeEntityId, switchableEntities } = useEntityScope()
   const { clients } = useClients()
   const { laborRates } = usePriceLists()
   const { wos } = useWorkOrders()
@@ -80,28 +81,54 @@ export function BreakdownPastePage() {
   const [nte, setNte] = useState('')
   const [proposalText, setProposalText] = useState('')
   const [autoFilledWo, setAutoFilledWo] = useState('')
+  const [matchedEntityId, setMatchedEntityId] = useState<string | null>(null)
 
-  // As soon as the typed WO# matches one already in the work order list,
-  // pull its client/trade/city/state/NTE straight in -- those are the
-  // authoritative values dispatch already has, so there's no reason to
-  // retype them. Only fields the work order actually has get overwritten;
-  // anything the dispatcher already typed for a field the WO leaves blank
-  // is left alone. Every field stays editable afterward.
+  // As soon as the typed WO# matches a real work order, pull its
+  // client/trade/city/state/NTE straight in -- those are the authoritative
+  // values dispatch already has, so there's no reason to retype them. Only
+  // fields the work order actually has get overwritten; anything the
+  // dispatcher already typed for a field the WO leaves blank is left
+  // alone. Every field stays editable afterward.
+  //
+  // This looks the WO# up directly (not through the entity-scoped `wos`
+  // list above, which only has the currently active entity's work orders)
+  // so it finds the WO -- and its OWN entity -- no matter which entity the
+  // switcher happens to be on. That entity is what gets checked against
+  // below (price list, GMN rules), not whatever the switcher shows.
   useEffect(() => {
     const trimmed = wo.trim()
     if (!trimmed) {
       setAutoFilledWo('')
+      setMatchedEntityId(null)
       return
     }
-    const matched = wos.find((w) => w.wo.toLowerCase() === trimmed.toLowerCase())
-    if (!matched) return
-    if (matched.client) setClientName(matched.client)
-    if (matched.trade) setTradeName(matched.trade)
-    if (matched.city) setCity(matched.city)
-    if (matched.state) setState(matched.state)
-    if (matched.nte != null) setNte(String(matched.nte))
-    setAutoFilledWo(matched.wo)
-  }, [wo, wos])
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      const { data } = await supabase
+        .from('work_orders')
+        .select('wo, client, trade, city, state, nte, entity_id')
+        .ilike('wo', trimmed)
+        .limit(1)
+        .maybeSingle()
+      if (cancelled || !data) return
+      if (data.client) setClientName(data.client)
+      if (data.trade) setTradeName(data.trade)
+      if (data.city) setCity(data.city)
+      if (data.state) setState(data.state)
+      if (data.nte != null) setNte(String(data.nte))
+      setAutoFilledWo(data.wo)
+      setMatchedEntityId(data.entity_id ?? null)
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [wo])
+
+  const matchedEntityName = useMemo(
+    () => (matchedEntityId ? switchableEntities.find((e) => e.id === matchedEntityId)?.name : undefined),
+    [matchedEntityId, switchableEntities],
+  )
 
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
@@ -120,7 +147,7 @@ export function BreakdownPastePage() {
     try {
       const { data, error: err } = await supabase.functions.invoke('audit-proposal-text', {
         body: {
-          entity_id: activeEntityId,
+          entity_id: matchedEntityId ?? activeEntityId,
           wo: wo.trim() || null,
           client_name: clientName.trim() || null,
           trade_name: tradeName.trim() || null,
@@ -201,7 +228,7 @@ export function BreakdownPastePage() {
             </datalist>
             {autoFilledWo && (
               <p className="text-xs text-good mt-1">
-                Found WO {autoFilledWo} -- client/trade/city/state/NTE filled in below. Edit any field if it's wrong.
+                Found WO {autoFilledWo}{matchedEntityName ? ` (${matchedEntityName})` : ''} -- client/trade/city/state/NTE filled in below. Edit any field if it's wrong.
               </p>
             )}
           </div>

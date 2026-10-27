@@ -11,11 +11,16 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //      items, extracting the prices exactly as written (no corrections yet
 //      -- that would mean trusting the model with arithmetic, which this
 //      app never does).
-//   2. The SAME deterministic Global Maintenance Network rules as
-//      audit-proposal (sales tax, EMG-vs-normal rate-sheet, equal hours) are
-//      applied in code, but here they MUTATE the parsed line items instead
-//      of just flagging a mismatch, since there's no saved proposal for the
-//      dispatcher to go edit by hand -- the fixed breakdown IS the output.
+//   2. Deterministic fixes, applied in code (never trusted to the AI),
+//      MUTATING the parsed line items instead of just flagging a mismatch
+//      -- there's no saved proposal for the dispatcher to go edit by hand,
+//      so the fixed breakdown IS the output. Two kinds:
+//        - Labor rate vs. this job's OWN entity price list (Technician,
+//          Assessment Fee, Helper) -- works for any entity, as long as that
+//          entity has its price list filled in.
+//        - Global Maintenance Network's own contract terms (flat Trip Fee,
+//          every tech/helper gets equal hours, O'Reilly/Bob Evans sales
+//          tax) -- GMN-only, same as audit-proposal.
 //      If the dispatcher gave a Not-To-Exceed ceiling, a fix is only
 //      auto-applied when the result stays at-or-under it; a fix that would
 //      cross the NTE is left unapplied and flagged instead, since crossing
@@ -26,10 +31,13 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //      client's NTE (it was already over before any fixing, say), that's
 //      flagged too.
 //   4. An AI (Gemini) read of whether the (corrected) line items actually
-//      match the narrative's scope, PLUS -- using the same AI Learning
-//      history (quote_outcomes) generate-proposal pricing calibrates
-//      against -- whether this total resembles patterns this client/trade
-//      has previously gotten pushed back on.
+//      match the narrative's scope, whether billed parts look consistent
+//      with this entity's parts price list (flagged only -- parts pricing
+//      is never auto-corrected, since matching a pasted description to a
+//      catalog item is a judgment call, not arithmetic), PLUS -- using the
+//      same AI Learning history (quote_outcomes) generate-proposal pricing
+//      calibrates against -- whether this total resembles patterns this
+//      client/trade has previously gotten pushed back on.
 // A narrative-vs-line-items scope mismatch (e.g. narrative says "repaired
 // the door" but a line bills a brand-new door) is never auto-changed --
 // that needs a human judgment call about what actually happened on site --
@@ -211,49 +219,40 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       findings.push({ severity: 'high', category: 'nte', message })
     }
 
-    if (isGmn) {
+    // Index lookups shared by both the generic labor-rate check below and
+    // GMN's own Trip Fee / equal-hours rules further down.
+    const tradeName = (body.trade_name ?? '').trim()
+    const techIdx = corrected.findIndex((li) => li.kind === 'labor' && !roleMatches(li, /helper/i) && !roleMatches(li, /trip/i) && !roleMatches(li, /assess/i))
+    const assessIdx = corrected.findIndex((li) => roleMatches(li, /assess/i))
+    const helperIdx = corrected.findIndex((li) => roleMatches(li, /helper/i))
+    const tripIdx = corrected.findIndex((li) => roleMatches(li, /trip/i))
+
+    // -- Labor rates vs. this job's OWN entity price list (Technician,
+    // Assessment Fee, Helper) -- works for any entity that has its price
+    // list filled in, not just GMN. --
+    if (body.entity_id) {
       const { data: laborRates } = await supabase
         .from('labor_rates')
         .select('role_name, hourly_cost')
-        .eq('entity_id', GMN_ENTITY_ID)
+        .eq('entity_id', body.entity_id)
         .eq('active', true)
       const findRate = (roleName: string) =>
         (laborRates ?? []).find((r) => r.role_name.toLowerCase().trim() === roleName.toLowerCase().trim())
 
-      // -- Trip Fee --
-      const tripIdx = corrected.findIndex((li) => roleMatches(li, /trip/i))
-      if (tripIdx >= 0) {
-        const expectedTrip = isEmg ? 112.5 : 75
-        const before = corrected[tripIdx].unit_price
-        if (Math.abs(before - expectedTrip) > 0.005) {
-          const delta = round2(corrected[tripIdx].quantity * (expectedTrip - before))
-          if (fitsUnderNte(delta)) {
-            corrected[tripIdx] = { ...corrected[tripIdx], unit_price: expectedTrip, changed: true, note: `Trip Fee corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate, one trip per job).` }
-            fixesApplied.push({ category: 'rate_sheet', message: corrected[tripIdx].note! })
-          } else {
-            withheldForNte(`Trip Fee should be corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
-          }
-        }
-      }
-
-      // -- Trade labor (Technician) + Assessment Fee --
-      const tradeName = (body.trade_name ?? '').trim()
       const tradeRate = tradeName ? findRate(isEmg ? `${tradeName} (EMG)` : tradeName) : undefined
       if (tradeRate) {
-        const techIdx = corrected.findIndex((li) => li.kind === 'labor' && !roleMatches(li, /helper/i) && !roleMatches(li, /trip/i) && !roleMatches(li, /assess/i))
         if (techIdx >= 0) {
           const before = corrected[techIdx].unit_price
           if (Math.abs(before - tradeRate.hourly_cost) > 0.005) {
             const delta = round2(corrected[techIdx].quantity * (tradeRate.hourly_cost - before))
             if (fitsUnderNte(delta)) {
-              corrected[techIdx] = { ...corrected[techIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `${tradeName} labor rate corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate).` }
+              corrected[techIdx] = { ...corrected[techIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `${tradeName} labor rate corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list).` }
               fixesApplied.push({ category: 'rate_sheet', message: corrected[techIdx].note! })
             } else {
-              withheldForNte(`${tradeName} labor should be corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+              withheldForNte(`${tradeName} labor should be corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
             }
           }
         }
-        const assessIdx = corrected.findIndex((li) => roleMatches(li, /assess/i))
         if (assessIdx >= 0) {
           const before = corrected[assessIdx].unit_price
           if (Math.abs(before - tradeRate.hourly_cost) > 0.005) {
@@ -268,24 +267,44 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
         }
       }
 
-      // -- Helper rate + equal hours --
       const helperRate = findRate(isEmg ? 'Helper (EMG)' : 'Helper')
-      const helperIdx = corrected.findIndex((li) => roleMatches(li, /helper/i))
       if (helperIdx >= 0 && helperRate) {
         const before = corrected[helperIdx].unit_price
         if (Math.abs(before - helperRate.hourly_cost) > 0.005) {
           const delta = round2(corrected[helperIdx].quantity * (helperRate.hourly_cost - before))
           if (fitsUnderNte(delta)) {
-            corrected[helperIdx] = { ...corrected[helperIdx], unit_price: helperRate.hourly_cost, changed: true, note: `Helper rate corrected from $${before.toFixed(2)}/hr to $${helperRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate).` }
+            corrected[helperIdx] = { ...corrected[helperIdx], unit_price: helperRate.hourly_cost, changed: true, note: `Helper rate corrected from $${before.toFixed(2)}/hr to $${helperRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list).` }
             fixesApplied.push({ category: 'rate_sheet', message: corrected[helperIdx].note! })
           } else {
-            withheldForNte(`Helper rate should be corrected from $${before.toFixed(2)}/hr to $${helperRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+            withheldForNte(`Helper rate should be corrected from $${before.toFixed(2)}/hr to $${helperRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
           }
         }
       }
-      const techIdxForHours = corrected.findIndex((li) => li.kind === 'labor' && !roleMatches(li, /helper/i) && !roleMatches(li, /trip/i) && !roleMatches(li, /assess/i))
-      if (helperIdx >= 0 && techIdxForHours >= 0) {
-        const techHours = corrected[techIdxForHours].quantity
+    }
+
+    // -- Global Maintenance Network's own contract terms: flat Trip Fee,
+    // equal tech/helper hours, and O'Reilly/Bob Evans sales tax. These are
+    // GMN-specific business rules, not price-list lookups, so they stay
+    // gated to GMN jobs only. --
+    if (isGmn) {
+      // -- Trip Fee --
+      if (tripIdx >= 0) {
+        const expectedTrip = isEmg ? 112.5 : 75
+        const before = corrected[tripIdx].unit_price
+        if (Math.abs(before - expectedTrip) > 0.005) {
+          const delta = round2(corrected[tripIdx].quantity * (expectedTrip - before))
+          if (fitsUnderNte(delta)) {
+            corrected[tripIdx] = { ...corrected[tripIdx], unit_price: expectedTrip, changed: true, note: `Trip Fee corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate, one trip per job).` }
+            fixesApplied.push({ category: 'rate_sheet', message: corrected[tripIdx].note! })
+          } else {
+            withheldForNte(`Trip Fee should be corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+          }
+        }
+      }
+
+      // -- Equal hours --
+      if (helperIdx >= 0 && techIdx >= 0) {
+        const techHours = corrected[techIdx].quantity
         const helperHours = corrected[helperIdx].quantity
         if (techHours > 0 && Math.abs(techHours - helperHours) > 0.01) {
           const delta = round2((techHours - helperHours) * corrected[helperIdx].unit_price)
@@ -365,15 +384,34 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       body.trade_name ?? null,
     )
 
-    // ---- Stage 5: AI scope-consistency + pricing-risk check against the
-    // corrected items -- flagged only, never auto-changed. ----
+    // ---- Stage 5: AI scope-consistency + pricing-risk + parts-pricing
+    // check against the corrected items -- flagged only, never
+    // auto-changed. Parts can't be safely auto-corrected like labor rates
+    // (matching a pasted description to a catalog item is a judgment call,
+    // not arithmetic), so a mismatch is surfaced for a human to confirm. ----
     let overallAssessment = ''
     if (corrected.length === 0) {
       findings.push({ severity: 'low', category: 'other', message: 'No line items could be read from the pasted text, so there was nothing to check against the narrative.' })
     } else {
+      const partsOnBill = corrected.filter((li) => li.kind === 'part')
+      let partsCatalogText = ''
+      if (body.entity_id && partsOnBill.length > 0) {
+        const { data: partsCatalog } = await supabase
+          .from('parts_price_list')
+          .select('name, unit_cost, unit, category')
+          .eq('entity_id', body.entity_id)
+          .eq('active', true)
+          .limit(300)
+        if (partsCatalog && partsCatalog.length > 0) {
+          partsCatalogText = `\nThis entity's parts price list (for comparison only -- a billed part with no clear match here isn't necessarily wrong, it may just not be a catalog item):\n${partsCatalog
+            .map((p: { name: string; unit_cost: number; unit: string; category: string | null }) => `- ${p.name}: $${Number(p.unit_cost).toFixed(2)} / ${p.unit}${p.category ? ` (${p.category})` : ''}`)
+            .join('\n')}`
+        }
+      }
+
       const lineItemsText = corrected.map((li) => `- [${li.kind}] ${li.description} -- qty ${li.quantity}, bills $${(li.quantity * li.unit_price).toFixed(2)}`).join('\n')
       const scopePrompt = `
-You are auditing an already-written maintenance/repair proposal, checking (1) whether the billed line items actually match the scope described in the narrative, and (2) whether the total resembles patterns this client/trade has previously gotten pushed back on. Do not re-judge whether the price is fair in the abstract -- only scope-vs-billing consistency and resemblance to real rejection history.
+You are auditing an already-written maintenance/repair proposal, checking (1) whether the billed line items actually match the scope described in the narrative, (2) whether billed parts look consistent with this entity's parts price list, and (3) whether the total resembles patterns this client/trade has previously gotten pushed back on. Do not re-judge whether the price is fair in the abstract -- only scope-vs-billing consistency, parts-vs-catalog consistency, and resemblance to real rejection history.
 
 Work order: ${body.wo || 'n/a'}
 Client: ${body.client_name || 'n/a'}
@@ -388,6 +426,7 @@ ${parsed.narrative_recommendation ? `\nRecommendation:\n${parsed.narrative_recom
 
 Line items currently billed:
 ${lineItemsText}
+${partsCatalogText}
 
 ${outcomesContext || 'No labeled approval/rejection history is available yet for this client/trade.'}
 
@@ -395,8 +434,9 @@ Look specifically for:
 1. Scope mismatches -- a line item implies a bigger or different job than the narrative describes (the clearest example: narrative says a door was REPAIRED/fixed, but a line item bills a brand-new/replacement door). Category: "scope_mismatch".
 2. Parts or labor unrelated to anything in the narrative. Category: "scope_mismatch".
 3. Something the narrative implies was done or is needed, with no corresponding line item. Category: "scope_mismatch".
-4. Whether this total, or the hours/parts behind it, resembles patterns this client/trade has previously rejected or asked to revise (per the history above). Category: "pricing_risk". Do not flag this just for being close to the NTE -- that's checked separately; only flag a real resemblance to a past rejection pattern.
-5. Any other clear inconsistency. Category: "other".
+4. Parts pricing -- only if a parts price list was provided above: a billed part whose price is clearly out of line with a catalog item you're confident it corresponds to (e.g. billed well above or below that item's listed price). Category: "parts_pricing". Be conservative: only flag a real, confident correspondence, never guess at a match or nitpick small differences, and treat a catalog entry marked "VARIABLE" or "confirm with vendor" as a range to sanity-check against, not an exact price to match.
+5. Whether this total, or the hours/parts behind it, resembles patterns this client/trade has previously rejected or asked to revise (per the history above). Category: "pricing_risk". Do not flag this just for being close to the NTE -- that's checked separately; only flag a real resemblance to a past rejection pattern.
+6. Any other clear inconsistency. Category: "other".
 
 If everything lines up, return an empty findings array and say so in overall_assessment.
 `.trim()
@@ -409,7 +449,7 @@ If everything lines up, return an empty findings array and say so in overall_ass
               type: 'OBJECT',
               properties: {
                 severity: { type: 'STRING', enum: ['high', 'medium', 'low'] },
-                category: { type: 'STRING', enum: ['scope_mismatch', 'pricing_risk', 'other'] },
+                category: { type: 'STRING', enum: ['scope_mismatch', 'parts_pricing', 'pricing_risk', 'other'] },
                 message: { type: 'STRING', description: 'What the issue is and a suggested resolution -- this is flagged for a human to decide, never changed automatically.' },
               },
               required: ['severity', 'category', 'message'],
