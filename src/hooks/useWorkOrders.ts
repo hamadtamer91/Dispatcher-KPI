@@ -25,19 +25,26 @@ function normalize(input: Partial<WorkOrder>): Partial<WorkOrder> {
   return out as Partial<WorkOrder>
 }
 
-export function useWorkOrders() {
+/** @param entityFilter Overrides which entity's work orders to load, instead
+ *  of the sidebar's active entity -- pass a specific entity id, or 'all' to
+ *  load every entity at once (the Map tab's entity picker uses this; RLS
+ *  still quietly limits a non-super_admin to their own entity either way,
+ *  so passing 'all' for them is harmless, just redundant). Leave it unset
+ *  for the normal, single-entity behavior every other page uses. */
+export function useWorkOrders(entityFilter?: string | 'all') {
   const { activeEntityId } = useEntityScope()
+  const effectiveEntityId = entityFilter === undefined ? activeEntityId : entityFilter
   const [wos, setWos] = useState<WorkOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const refetch = useCallback(async () => {
-    if (!activeEntityId) return
-    const { data, error: err } = await supabase
-      .from('work_orders')
-      .select('*')
-      .eq('entity_id', activeEntityId)
-      .order('wo_date', { ascending: false })
+    if (!effectiveEntityId) return
+    let query = supabase.from('work_orders').select('*').order('wo_date', { ascending: false })
+    if (effectiveEntityId !== 'all') {
+      query = query.eq('entity_id', effectiveEntityId)
+    }
+    const { data, error: err } = await query
     if (err) {
       setError(err.message)
     } else {
@@ -45,7 +52,7 @@ export function useWorkOrders() {
       setError('')
     }
     setLoading(false)
-  }, [activeEntityId])
+  }, [effectiveEntityId])
 
   useEffect(() => {
     refetch()
