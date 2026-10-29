@@ -85,6 +85,7 @@ function sanitizeValue(col: string, raw: any): any {
 // (i.e. this entity's workbook lives under the same Microsoft 365
 // tenant/app as whichever entity set those shared secrets up first).
 interface SourceConfig {
+  id: string
   entityId: string
   entityName: string
   shareUrl: string
@@ -110,7 +111,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   )
   const tokenData = await tokenRes.json()
   if (!tokenRes.ok) {
-    return { entity: source.entityName, step: 'token', error: tokenData }
+    return { entity: source.entityName, table: source.tableName, step: 'token', error: tokenData }
   }
   const token = tokenData.access_token
 
@@ -121,12 +122,12 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   )
   const driveItemData = await driveItemRes.json()
   if (!driveItemRes.ok) {
-    return { entity: source.entityName, step: 'resolve_share', error: driveItemData }
+    return { entity: source.entityName, table: source.tableName, step: 'resolve_share', error: driveItemData }
   }
   const driveId = driveItemData.parentReference?.driveId
   const itemId = driveItemData.id
   if (!driveId || !itemId) {
-    return { entity: source.entityName, step: 'resolve_share', error: 'missing driveId/itemId', raw: driveItemData }
+    return { entity: source.entityName, table: source.tableName, step: 'resolve_share', error: 'missing driveId/itemId', raw: driveItemData }
   }
 
   // Look up the table's actual header row so we can find the store/client
@@ -137,7 +138,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   )
   const columnsData = await columnsRes.json()
   if (!columnsRes.ok) {
-    return { entity: source.entityName, step: 'columns', error: columnsData, driveId, itemId }
+    return { entity: source.entityName, table: source.tableName, step: 'columns', error: columnsData, driveId, itemId }
   }
   const tableColumns: { name: string; index: number }[] = columnsData.value ?? []
   const clientColumn = tableColumns.find((c) => CLIENT_HEADER_PATTERN.test(c.name ?? ''))
@@ -149,7 +150,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   )
   const rowsData = await rowsRes.json()
   if (!rowsRes.ok) {
-    return { entity: source.entityName, step: 'rows', error: rowsData, driveId, itemId }
+    return { entity: source.entityName, table: source.tableName, step: 'rows', error: rowsData, driveId, itemId }
   }
 
   const rawRows = rowsData.value ?? []
@@ -170,12 +171,13 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   if (records.length > 0) {
     const { error } = await supabase.from('work_orders').upsert(records, { onConflict: 'wo' })
     if (error) {
-      return { entity: source.entityName, step: 'upsert', error, sampleMapped: records[0] }
+      return { entity: source.entityName, table: source.tableName, step: 'upsert', error, sampleMapped: records[0] }
     }
   }
 
   return {
     entity: source.entityName,
+    table: source.tableName,
     synced: records.length,
     skipped,
     clientColumnFound: clientColumn ? clientColumn.name : null,
@@ -203,25 +205,29 @@ Deno.serve(async (req) => {
     // it a row here (never overwriting one that's already there) so every
     // entity's config -- this one included -- lives in one place going
     // forward, without ever having to know or re-enter the existing secret.
+    // (An entity can now have several sources -- one per client sheet/table
+    // -- so this matches on the same (entity_id, ms_table_name) pair the
+    // table's unique constraint uses, not on entity_id alone.)
     if (SHARE_URL && TABLE_NAME) {
       const { data: gmn } = await supabase.from('entities').select('id').eq('name', 'Global Maintenance Network').maybeSingle()
       if (gmn) {
         await supabase.from('entity_work_order_sources').upsert(
           { entity_id: gmn.id, ms_share_url: SHARE_URL, ms_table_name: TABLE_NAME },
-          { onConflict: 'entity_id', ignoreDuplicates: true }
+          { onConflict: 'entity_id,ms_table_name', ignoreDuplicates: true }
         )
       }
     }
 
     const { data: sourceRows, error: sourcesErr } = await supabase
       .from('entity_work_order_sources')
-      .select('entity_id, ms_share_url, ms_table_name, ms_tenant_id, ms_client_id, ms_client_secret, entities(name)')
+      .select('id, entity_id, ms_share_url, ms_table_name, ms_tenant_id, ms_client_id, ms_client_secret, entities(name)')
       .eq('active', true)
     if (sourcesErr) {
       return new Response(JSON.stringify({ step: 'load_sources', error: sourcesErr }), { status: 500 })
     }
 
     const sources: SourceConfig[] = (sourceRows ?? []).map((row: any) => ({
+      id: row.id,
       entityId: row.entity_id,
       entityName: row.entities?.name ?? row.entity_id,
       shareUrl: row.ms_share_url,
@@ -291,12 +297,48 @@ Deno.serve(async (req) => {
       ])
       const wsData = await wsRes.json()
       const tblData = await tblRes.json()
+
+      // For every table found (not just the one currently configured),
+      // also fetch its header row -- so a caller can compare each
+      // client sheet's actual column layout against COLUMN_MAP before
+      // wiring that sheet up as a new source. Read-only, diagnose-only.
+      const sampleRows = url.searchParams.get('sampleRows') === '1'
+      const tableList: any[] = tblRes.ok ? (tblData.value ?? []) : []
+      const tablesWithColumns = await Promise.all(
+        tableList.map(async (t: any) => {
+          const colRes = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${t.id}/columns?$select=name,index`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          const colData = await colRes.json()
+          const entry: Record<string, unknown> = {
+            name: t.name,
+            worksheet: t.worksheet?.name ?? null,
+            columns: colRes.ok ? (colData.value ?? []).map((c: any) => c.name) : { error: colData },
+          }
+          // Optional (?sampleRows=1): include the first couple of data rows
+          // too, so a caller can see actual cell content (e.g. what a
+          // "Store" column really holds) without touching work_orders.
+          if (sampleRows) {
+            const rowsRes = await fetch(
+              `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${t.id}/rows?$top=2`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            )
+            const rowsData = await rowsRes.json()
+            entry.sampleRows = rowsRes.ok ? (rowsData.value ?? []).map((r: any) => r.values[0]) : { error: rowsData }
+          }
+          return entry
+        })
+      )
+
       return new Response(JSON.stringify({
         diagnose: true,
         entity: target.entityName,
         currentlySyncedTable: target.tableName,
+        columnMapReference: COLUMN_MAP,
         worksheets: wsRes.ok ? wsData.value : { error: wsData },
         tables: tblRes.ok ? tblData.value : { error: tblData },
+        tableColumns: tablesWithColumns,
       }), { headers: { 'Content-Type': 'application/json' } })
     }
 
@@ -309,13 +351,17 @@ Deno.serve(async (req) => {
       try {
         result = await syncOneSource(source, supabase)
       } catch (err) {
-        result = { entity: source.entityName, step: 'unhandled', error: errMsg(err) }
+        result = { entity: source.entityName, table: source.tableName, step: 'unhandled', error: errMsg(err) }
       }
       results.push(result)
+      // Match on this row's own id -- an entity can now have several
+      // source rows (one per client sheet/table), so matching on
+      // entity_id alone would stomp every sibling row with this one's
+      // result.
       await supabase
         .from('entity_work_order_sources')
         .update({ last_synced_at: new Date().toISOString(), last_sync_result: result })
-        .eq('entity_id', source.entityId)
+        .eq('id', source.id)
     }
 
     const totalSynced = results.reduce((sum, r: any) => sum + (r.synced ?? 0), 0)
