@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutGrid, ClipboardList, Users, Building2, LogOut, BarChart3,
-  Map as MapIcon, FileText, Tags, Phone, Menu, X, Sparkles, ClipboardCheck,
+  Map as MapIcon, FileText, Tags, Phone, Menu, X, Sparkles, ClipboardCheck, ShieldCheck,
 } from 'lucide-react'
 import { useAuth } from './hooks/useAuth'
 import { useLiveCallCount } from './hooks/useLiveCallCount'
@@ -22,11 +22,12 @@ import { ProposalDetailPage } from './pages/ProposalDetailPage'
 import { BreakdownPage } from './pages/BreakdownPage'
 import { BreakdownPastePage } from './pages/BreakdownPastePage'
 import { BreakdownDetailPage } from './pages/BreakdownDetailPage'
+import { TeamLeaderCheckPage } from './pages/TeamLeaderCheckPage'
 import { PriceListsPage } from './pages/PriceListsPage'
 import { DispatchAgentPage } from './pages/DispatchAgentPage'
 import { AiLearningPage } from './pages/AiLearningPage'
 
-type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'breakdown' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
+type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'breakdown' | 'tl_check' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
 type DispatcherTab = 'jobs' | 'breakdown' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
 
 interface NavEntry<T extends string> {
@@ -98,6 +99,7 @@ export default function App() {
       label: 'Sales',
       items: [
         { key: 'breakdown', label: 'Breakdown', icon: <ClipboardCheck size={17} /> },
+        { key: 'tl_check', label: 'Team Leader Check', icon: <ShieldCheck size={17} /> },
         { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
         { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
         { key: 'ai_learning', label: 'AI Learning', icon: <Sparkles size={17} /> },
@@ -181,6 +183,7 @@ export default function App() {
             {tab === 'analytics' && <AnalyticsPage />}
             {tab === 'map' && <MapPage />}
             {tab === 'breakdown' && <BreakdownPage />}
+            {tab === 'tl_check' && <TeamLeaderCheckPage />}
             {tab === 'proposals' && (
               <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
             )}
