@@ -11,18 +11,87 @@ function errMsg(err: unknown): string {
   try { return JSON.stringify(err) } catch { return String(err) }
 }
 
-// Fixed Excel column order -> Supabase column names, for every column EXCEPT
-// the store/client one. That one's position in the sheet isn't locked down --
-// it was added after the fact and may not sit at the literal last column --
-// so instead of trusting a fixed index for it, we look up the table's real
-// header row and find whichever column is named like "Store" or "Client".
-// This also means it keeps working if more columns get added after it later.
+// Fixed Excel column order -> Supabase column names. Kept only as a FALLBACK
+// now (see FIELD_PATTERNS below) for whichever field a sheet's real header
+// row doesn't name recognizably -- not trusted as the primary way to find
+// a column anymore. Different entities' workbooks turned out to not agree
+// on column order past "Quote Sent On": some insert a "Completion Date"
+// column before Invoiced On that this map has no slot for, which used to
+// mean Invoiced On got read from the wrong position (and Completion Date
+// silently dropped). Reading every column by its real header name fixes
+// that regardless of where it sits. Index 5 ('col_blank1') stays reserved:
+// the store/client column's position was never trusted even before this,
+// since it was added after the fact and may not sit at a fixed index --
+// instead we look up the table's real header row and find whichever column
+// is named like "Store" or "Client".
 const COLUMN_MAP = [
   'wo', 'dispatcher', 'status', 'wo_date', 'eta',
   'col_blank1', 'trade', 'subtrade', 'address', 'city', 'state',
   'nte', 'nte_approved', 'cost', 'profit_pct', 'description',
   'quote_sent_on', 'admin_notes', 'tl_notes', 'invoiced_on',
 ]
+
+// The fixed position each field falls back to when its name can't be found
+// in a given sheet's own header row (built once from COLUMN_MAP above).
+const FALLBACK_INDEX: Record<string, number> = {}
+COLUMN_MAP.forEach((col, i) => {
+  if (col !== 'col_blank1') FALLBACK_INDEX[col] = i
+})
+
+// Every field except store/client, matched against a sheet's real header
+// text instead of trusting its position. Headers vary a bit sheet to sheet
+// (trailing spaces, "WorkOrder" vs "Work Orders", a stray typo like
+// "Completeion Date") so these are forgiving on whitespace/plural/typo,
+// but anchored so e.g. "NTE" never matches "NTE Approved". Order doesn't
+// matter: every pattern is anchored to the *whole* trimmed header, so two
+// patterns can never both claim the same real column.
+const FIELD_PATTERNS: [string, RegExp][] = [
+  ['wo', /^work\s*orders?$/i],
+  ['dispatcher', /^dispatchers?$/i],
+  ['status', /^status$/i],
+  ['wo_date', /^received\s+date$/i],
+  ['eta', /^eta$/i],
+  ['trade', /^trade$/i],
+  ['subtrade', /^sub\s*trade$/i],
+  ['address', /^add?ress$/i],
+  ['city', /^city$/i],
+  ['state', /^state$/i],
+  ['nte_approved', /^nte\s+approved$/i],
+  ['nte', /^nte$/i],
+  ['cost', /^cost$/i],
+  ['profit_pct', /^profit\s*%?$/i],
+  ['description', /^description$/i],
+  ['quote_sent_on', /^quote\s+sent\s+on\s*\??$/i],
+  ['admin_notes', /^admin\s*notes?$/i],
+  ['tl_notes', /^tl\s*notes?$/i],
+  ['invoiced_on', /^invoiced\s+on\s*\??$/i],
+]
+
+// For one table's real header row, work out which column index each known
+// field actually lives at. A field whose name can't be matched (a header
+// that was renamed to something unrecognizable, e.g. a stray "Column1")
+// falls back to its old fixed position rather than being dropped outright --
+// no worse than the previous behavior, and `fallbackFields` in the sync
+// result flags it so a real mismatch doesn't pass silently.
+function resolveColumnIndexes(tableColumns: { name: string; index: number }[]): {
+  indexes: Record<string, number>
+  fallbackFields: string[]
+} {
+  const indexes: Record<string, number> = {}
+  const fallbackFields: string[] = []
+  const used = new Set<number>()
+  for (const [col, pattern] of FIELD_PATTERNS) {
+    const match = tableColumns.find((c) => !used.has(c.index) && pattern.test((c.name ?? '').trim()))
+    if (match) {
+      indexes[col] = match.index
+      used.add(match.index)
+    } else if (FALLBACK_INDEX[col] !== undefined) {
+      indexes[col] = FALLBACK_INDEX[col]
+      fallbackFields.push(col)
+    }
+  }
+  return { indexes, fallbackFields }
+}
 
 const CLIENT_HEADER_PATTERN = /store|client/i
 
@@ -130,8 +199,8 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
     return { entity: source.entityName, table: source.tableName, step: 'resolve_share', error: 'missing driveId/itemId', raw: driveItemData }
   }
 
-  // Look up the table's actual header row so we can find the store/client
-  // column by name instead of assuming a fixed position for it.
+  // Look up the table's actual header row so we can find every field --
+  // store/client included -- by name instead of assuming a fixed position.
   const columnsRes = await fetch(
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/columns?$select=name,index`,
     { headers: { Authorization: `Bearer ${token}` } }
@@ -143,6 +212,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   const tableColumns: { name: string; index: number }[] = columnsData.value ?? []
   const clientColumn = tableColumns.find((c) => CLIENT_HEADER_PATTERN.test(c.name ?? ''))
   const clientColumnIndex = clientColumn ? clientColumn.index : null
+  const { indexes: fieldIndex, fallbackFields } = resolveColumnIndexes(tableColumns)
 
   const rowsRes = await fetch(
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/rows`,
@@ -157,9 +227,9 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   const allRecords = rawRows.map((row: any) => {
     const values = row.values[0]
     const record: Record<string, any> = {}
-    COLUMN_MAP.forEach((col, i) => {
-      if (col !== 'col_blank1') record[col] = sanitizeValue(col, values[i])
-    })
+    for (const col of Object.keys(fieldIndex)) {
+      record[col] = sanitizeValue(col, values[fieldIndex[col]])
+    }
     record.client = clientColumnIndex !== null ? sanitizeValue('client', values[clientColumnIndex]) : null
     record.entity_id = source.entityId
     return record
@@ -181,6 +251,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
     synced: records.length,
     skipped,
     clientColumnFound: clientColumn ? clientColumn.name : null,
+    fallbackFields: fallbackFields.length > 0 ? fallbackFields : undefined,
   }
 }
 
