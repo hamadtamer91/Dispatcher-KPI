@@ -166,12 +166,22 @@ ${proposalText}
 Pull out the narrative (scope of work, and findings/recommendation if those are written separately), and every billed line item with its kind (labor/part/other), description, role (Technician/Helper/Trip Fee/Assessment Fee/trade name for labor lines), quantity, and the unit price. Watch for a common shorthand: "Description xN: $amount" means $amount is the TOTAL for all N units/hours, not the price of one -- in that case the unit price is $amount divided by N. If a total or subtotal is written at the end of the proposal, ignore it -- only extract the individual line items.
 `.trim()
 
-    const parseRes = await callGeminiWithRetry([{ text: parsePrompt }], parseSchema)
+    // 16384 (same headroom generate-proposal uses) -- a long narrative plus
+    // many line items echoed back as structured JSON can otherwise run
+    // past the default limit and come back cut off mid-response.
+    const parseRes = await callGeminiWithRetry([{ text: parsePrompt }], parseSchema, 16384)
     if (!parseRes.ok) {
       return jsonResponse({ error: await geminiErrorMessage(parseRes) }, parseRes.status === 200 ? 502 : parseRes.status)
     }
     const parseJson = await parseRes.json()
-    const parseRawText: string = (parseJson.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('')
+    const parseCandidate = parseJson.candidates?.[0]
+    const parseRawText: string = (parseCandidate?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('')
+    // A response cut off at the token limit lands here as non-empty but
+    // truncated JSON -- catch it by finishReason before attempting to
+    // parse, rather than letting it surface as a generic "malformed" error.
+    if (parseCandidate?.finishReason === 'MAX_TOKENS') {
+      return jsonResponse({ error: 'That proposal produced too much text and got cut off while being read. Try pasting a shorter excerpt, or split it into smaller checks.' }, 502)
+    }
     if (!parseRawText) {
       return jsonResponse({ error: 'The AI could not read the pasted text. Try pasting it again, or check it has at least a narrative and a few line items.' }, 502)
     }
@@ -592,7 +602,7 @@ async function geminiErrorMessage(res: Response): Promise<string> {
   }
 }
 
-async function callGeminiWithRetry(userParts: unknown[], responseSchema: unknown): Promise<Response> {
+async function callGeminiWithRetry(userParts: unknown[], responseSchema: unknown, maxOutputTokens = 4096): Promise<Response> {
   let transientRetries = 0
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -605,7 +615,7 @@ async function callGeminiWithRetry(userParts: unknown[], responseSchema: unknown
         headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY! },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: userParts }],
-          generationConfig: { maxOutputTokens: 4096, responseMimeType: 'application/json', responseSchema },
+          generationConfig: { maxOutputTokens, responseMimeType: 'application/json', responseSchema },
         }),
         signal: controller.signal,
       })
