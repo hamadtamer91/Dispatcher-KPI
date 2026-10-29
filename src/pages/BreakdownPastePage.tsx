@@ -135,6 +135,69 @@ export function BreakdownPastePage() {
   const [result, setResult] = useState<AuditTextResult | null>(null)
   const [copied, setCopied] = useState(false)
 
+  // The narrative/pricing scope check (scope-vs-narrative, parts-vs-price-
+  // list, pricing-vs-history) runs as its OWN AI call, fired right after
+  // Check & Fix or Apply Edit returns, instead of being part of that
+  // response -- so the corrected breakdown above shows up as soon as the
+  // faster of the two AI calls finishes, and this slower one fills in the
+  // findings below a few seconds later instead of blocking the whole page.
+  const [scopeChecking, setScopeChecking] = useState(false)
+  const [scopeCheckError, setScopeCheckError] = useState('')
+
+  const runScopeCheck = async (input: {
+    entityId: string | null
+    narrativeScope: string
+    narrativeFindings: string
+    narrativeRecommendation: string
+    items: CorrectedLineItem[]
+  }) => {
+    setScopeChecking(true)
+    setScopeCheckError('')
+    try {
+      const { data, error: err } = await supabase.functions.invoke('check-breakdown-scope', {
+        body: {
+          entity_id: input.entityId,
+          wo: wo.trim() || null,
+          client_name: clientName.trim() || null,
+          trade_name: tradeName.trim() || null,
+          nte: nte.trim() ? Number(nte) : null,
+          narrative_scope: input.narrativeScope,
+          narrative_findings: input.narrativeFindings,
+          narrative_recommendation: input.narrativeRecommendation,
+          line_items: input.items.map(({ kind, description, role_name, quantity, unit_price }) => ({ kind, description, role_name, quantity, unit_price })),
+        },
+      })
+      if (err) {
+        let message = err.message
+        try {
+          const ctx = (err as unknown as { context?: Response }).context
+          if (ctx) {
+            const body = await ctx.clone().json()
+            if (body?.error) message = body.error
+          }
+        } catch {
+          // fall back to err.message
+        }
+        throw new Error(message)
+      }
+      if (data?.error) throw new Error(data.error)
+      setResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              scope_findings: [...prev.scope_findings, ...(data.scope_findings ?? [])],
+              overall_assessment: data.overall_assessment || prev.overall_assessment,
+              ai_learning: data.ai_learning,
+            }
+          : prev,
+      )
+    } catch (e) {
+      setScopeCheckError((e as Error).message)
+    } finally {
+      setScopeChecking(false)
+    }
+  }
+
   // The narrative and line items shown below are editable copies of the
   // last check/edit result -- hand edits here are purely local (nothing is
   // saved or re-validated) until the dispatcher asks the AI to apply a
@@ -176,6 +239,7 @@ export function BreakdownPastePage() {
     }
     setEditing(true)
     setEditError('')
+    setScopeCheckError('')
     try {
       const { data, error: err } = await supabase.functions.invoke('edit-proposal-breakdown', {
         body: {
@@ -208,9 +272,17 @@ export function BreakdownPastePage() {
         throw new Error(message)
       }
       if (data?.error) throw new Error(data.error)
-      setResult(data as AuditTextResult)
+      const editResult = data as AuditTextResult
+      setResult(editResult)
       setEditInstruction('')
       setCopied(false)
+      runScopeCheck({
+        entityId: matchedEntityId ?? activeEntityId,
+        narrativeScope: editResult.narrative_scope,
+        narrativeFindings: editResult.narrative_findings,
+        narrativeRecommendation: editResult.narrative_recommendation,
+        items: editResult.corrected_line_items,
+      })
     } catch (e) {
       setEditError((e as Error).message)
     } finally {
@@ -227,6 +299,7 @@ export function BreakdownPastePage() {
     setError('')
     setResult(null)
     setCopied(false)
+    setScopeCheckError('')
     try {
       const { data, error: err } = await supabase.functions.invoke('audit-proposal-text', {
         body: {
@@ -255,7 +328,15 @@ export function BreakdownPastePage() {
         throw new Error(message)
       }
       if (data?.error) throw new Error(data.error)
-      setResult(data as AuditTextResult)
+      const checkResult = data as AuditTextResult
+      setResult(checkResult)
+      runScopeCheck({
+        entityId: matchedEntityId ?? activeEntityId,
+        narrativeScope: checkResult.narrative_scope,
+        narrativeFindings: checkResult.narrative_findings,
+        narrativeRecommendation: checkResult.narrative_recommendation,
+        items: checkResult.corrected_line_items,
+      })
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -623,9 +704,7 @@ export function BreakdownPastePage() {
           <Panel className="p-4 space-y-2">
             <p className="text-sm font-bold text-ink">Still needs your review</p>
             {result.overall_assessment && <p className="text-sm text-ink-soft italic">{result.overall_assessment}</p>}
-            {result.scope_findings.length === 0 ? (
-              <p className="text-sm text-good">Narrative and line items look consistent.</p>
-            ) : (
+            {result.scope_findings.length > 0 && (
               <ul className="space-y-2">
                 {result.scope_findings.map((f, i) => (
                   <li key={i} className="flex items-start gap-2.5 rounded-lg border border-line bg-canvas p-3">
@@ -637,6 +716,17 @@ export function BreakdownPastePage() {
                   </li>
                 ))}
               </ul>
+            )}
+            {scopeChecking && (
+              <p className="text-sm text-ink-faint flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Checking the narrative, parts pricing, and past outcomes...
+              </p>
+            )}
+            {!scopeChecking && scopeCheckError && (
+              <p className="text-sm text-danger">Couldn't finish that check -- {scopeCheckError}</p>
+            )}
+            {!scopeChecking && !scopeCheckError && result.scope_findings.length === 0 && (
+              <p className="text-sm text-good">Narrative and line items look consistent.</p>
             )}
             {result.ai_learning && result.ai_learning.outcomes_considered > 0 && (
               <p className="text-xs text-ink-faint">

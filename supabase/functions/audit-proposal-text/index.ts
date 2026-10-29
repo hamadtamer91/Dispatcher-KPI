@@ -30,18 +30,14 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //   3. NTE status -- if, even after that, the total is still over the
 //      client's NTE (it was already over before any fixing, say), that's
 //      flagged too.
-//   4. An AI (Gemini) read of whether the (corrected) line items actually
-//      match the narrative's scope, whether billed parts look consistent
-//      with this entity's parts price list (flagged only -- parts pricing
-//      is never auto-corrected, since matching a pasted description to a
-//      catalog item is a judgment call, not arithmetic), PLUS -- using the
-//      same AI Learning history (quote_outcomes) generate-proposal pricing
-//      calibrates against -- whether this total resembles patterns this
-//      client/trade has previously gotten pushed back on.
-// A narrative-vs-line-items scope mismatch (e.g. narrative says "repaired
-// the door" but a line bills a brand-new door) is never auto-changed --
-// that needs a human judgment call about what actually happened on site --
-// so it's always returned as a flagged finding with a suggested resolution.
+// This function returns as soon as those three stages are done -- it used
+// to also run a 2nd AI pass here (checking the corrected items against the
+// narrative, the parts price list, and past outcomes), but that made every
+// check wait for two full AI calls before showing anything. That pass now
+// lives in its own function, check-breakdown-scope, which the frontend
+// calls right after this one returns, so the corrected breakdown shows up
+// as soon as this (faster) pass finishes and the slower judgment-call
+// findings fill in a few seconds later.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -386,103 +382,11 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       })
     }
 
-    // ---- Stage 4: AI Learning context, same cascade generate-proposal
-    // calibrates pricing against. ----
-    const { contextText: outcomesContext, scopeLabel: outcomesScopeLabel, n: outcomesN } = await fetchOutcomeContext(
-      supabase,
-      body.client_name ?? null,
-      body.trade_name ?? null,
-    )
-
-    // ---- Stage 5: AI scope-consistency + pricing-risk + parts-pricing
-    // check against the corrected items -- flagged only, never
-    // auto-changed. Parts can't be safely auto-corrected like labor rates
-    // (matching a pasted description to a catalog item is a judgment call,
-    // not arithmetic), so a mismatch is surfaced for a human to confirm. ----
-    let overallAssessment = ''
+    // ---- Done -- hand back the corrected breakdown right away. (See the
+    // file-top comment: the AI scope/parts-pricing/history check that used
+    // to run here as a further stage now lives in check-breakdown-scope.) ----
     if (corrected.length === 0) {
       findings.push({ severity: 'low', category: 'other', message: 'No line items could be read from the pasted text, so there was nothing to check against the narrative.' })
-    } else {
-      const partsOnBill = corrected.filter((li) => li.kind === 'part')
-      let partsCatalogText = ''
-      if (body.entity_id && partsOnBill.length > 0) {
-        const { data: partsCatalog } = await supabase
-          .from('parts_price_list')
-          .select('name, unit_cost, unit, category')
-          .eq('entity_id', body.entity_id)
-          .eq('active', true)
-          .limit(300)
-        if (partsCatalog && partsCatalog.length > 0) {
-          partsCatalogText = `\nThis entity's parts price list (for comparison only -- a billed part with no clear match here isn't necessarily wrong, it may just not be a catalog item):\n${partsCatalog
-            .map((p: { name: string; unit_cost: number; unit: string; category: string | null }) => `- ${p.name}: $${Number(p.unit_cost).toFixed(2)} / ${p.unit}${p.category ? ` (${p.category})` : ''}`)
-            .join('\n')}`
-        }
-      }
-
-      const lineItemsText = corrected.map((li) => `- [${li.kind}] ${li.description} -- qty ${li.quantity}, bills $${(li.quantity * li.unit_price).toFixed(2)}`).join('\n')
-      const scopePrompt = `
-You are auditing an already-written maintenance/repair proposal, checking (1) whether the billed line items actually match the scope described in the narrative, (2) whether billed parts look consistent with this entity's parts price list, and (3) whether the total resembles patterns this client/trade has previously gotten pushed back on. Do not re-judge whether the price is fair in the abstract -- only scope-vs-billing consistency, parts-vs-catalog consistency, and resemblance to real rejection history.
-
-Work order: ${body.wo || 'n/a'}
-Client: ${body.client_name || 'n/a'}
-Trade: ${body.trade_name || 'n/a'}
-Client's NTE (Not-To-Exceed) for this job: ${nte != null ? `$${nte.toFixed(2)}` : 'not set'}
-Current total: $${subtotalAfter.toFixed(2)}
-
-Narrative:
-${parsed.narrative_scope || '(none extracted)'}
-${parsed.narrative_findings ? `\nFindings:\n${parsed.narrative_findings}` : ''}
-${parsed.narrative_recommendation ? `\nRecommendation:\n${parsed.narrative_recommendation}` : ''}
-
-Line items currently billed:
-${lineItemsText}
-${partsCatalogText}
-
-${outcomesContext || 'No labeled approval/rejection history is available yet for this client/trade.'}
-
-Look specifically for:
-1. Scope mismatches -- a line item implies a bigger or different job than the narrative describes (the clearest example: narrative says a door was REPAIRED/fixed, but a line item bills a brand-new/replacement door). Category: "scope_mismatch".
-2. Parts or labor unrelated to anything in the narrative. Category: "scope_mismatch".
-3. Something the narrative implies was done or is needed, with no corresponding line item. Category: "scope_mismatch".
-4. Parts pricing -- only if a parts price list was provided above: a billed part whose price is clearly out of line with a catalog item you're confident it corresponds to (e.g. billed well above or below that item's listed price). Category: "parts_pricing". Be conservative: only flag a real, confident correspondence, never guess at a match or nitpick small differences, and treat a catalog entry marked "VARIABLE" or "confirm with vendor" as a range to sanity-check against, not an exact price to match.
-5. Whether this total, or the hours/parts behind it, resembles patterns this client/trade has previously rejected or asked to revise (per the history above). Category: "pricing_risk". Do not flag this just for being close to the NTE -- that's checked separately; only flag a real resemblance to a past rejection pattern.
-6. Any other clear inconsistency. Category: "other".
-
-If everything lines up, return an empty findings array and say so in overall_assessment.
-`.trim()
-      const scopeSchema = {
-        type: 'OBJECT',
-        properties: {
-          findings: {
-            type: 'ARRAY',
-            items: {
-              type: 'OBJECT',
-              properties: {
-                severity: { type: 'STRING', enum: ['high', 'medium', 'low'] },
-                category: { type: 'STRING', enum: ['scope_mismatch', 'parts_pricing', 'pricing_risk', 'other'] },
-                message: { type: 'STRING', description: 'What the issue is and a suggested resolution -- this is flagged for a human to decide, never changed automatically.' },
-              },
-              required: ['severity', 'category', 'message'],
-            },
-          },
-          overall_assessment: { type: 'STRING' },
-        },
-        required: ['findings', 'overall_assessment'],
-      }
-      const scopeRes = await callGeminiWithRetry([{ text: scopePrompt }], scopeSchema)
-      if (!scopeRes.ok) {
-        findings.push({ severity: 'low', category: 'other', message: `Could not run the narrative/pricing scope check -- ${await geminiErrorMessage(scopeRes)}` })
-      } else {
-        const scopeJson = await scopeRes.json()
-        const scopeRawText: string = (scopeJson.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('')
-        try {
-          const scopeParsed = JSON.parse(scopeRawText) as { findings?: { severity: Severity; category?: string; message: string }[]; overall_assessment?: string }
-          for (const f of scopeParsed.findings ?? []) findings.push({ severity: f.severity, category: f.category ?? 'scope_mismatch', message: f.message })
-          overallAssessment = scopeParsed.overall_assessment ?? ''
-        } catch {
-          findings.push({ severity: 'low', category: 'other', message: 'The AI scope check returned malformed output and was skipped.' })
-        }
-      }
     }
 
     const order: Record<Severity, number> = { high: 0, medium: 1, low: 2 }
@@ -498,98 +402,12 @@ If everything lines up, return an empty findings array and say so in overall_ass
       scope_findings: findings,
       subtotal_before: subtotalBefore,
       subtotal_after: subtotalAfter,
-      overall_assessment: overallAssessment,
-      ai_learning: { scope_label: outcomesScopeLabel, outcomes_considered: outcomesN },
       checked_at: new Date().toISOString(),
     })
   } catch (e) {
     return jsonResponse({ error: (e as Error).message ?? 'Unexpected error' }, 500)
   }
 })
-
-// Same cascade generate-proposal uses to calibrate pricing: client+trade,
-// falling back to client-only, then trade-only, then everything, until
-// there's enough (4+) labeled history to say something useful.
-async function fetchOutcomeContext(
-  // deno-lint-ignore no-explicit-any
-  supabase: any,
-  client: string | null,
-  trade: string | null,
-): Promise<{ contextText: string; scopeLabel: string; n: number }> {
-  type OutcomeRow = { trade: string | null; client: string | null; total_price: number | null; outcome: string; client_feedback: string | null; job_description: string | null }
-  const fetchOutcomes = async (filters: { client?: string; trade?: string }): Promise<OutcomeRow[]> => {
-    let q = supabase
-      .from('quote_outcomes')
-      .select('trade, client, total_price, outcome, client_feedback, job_description')
-      .order('created_at', { ascending: false })
-      .limit(30)
-    if (filters.client) q = q.ilike('client', filters.client)
-    if (filters.trade) q = q.ilike('trade', filters.trade)
-    const { data } = await q
-    return data ?? []
-  }
-
-  let rows: OutcomeRow[] = []
-  let scope: 'client_trade' | 'client' | 'trade' | 'all' = 'all'
-  if (client && trade) {
-    rows = await fetchOutcomes({ client, trade })
-    scope = 'client_trade'
-  }
-  if (rows.length < 4 && client) {
-    rows = await fetchOutcomes({ client })
-    scope = 'client'
-  }
-  if (rows.length < 4 && trade) {
-    rows = await fetchOutcomes({ trade })
-    scope = 'trade'
-  }
-  if (rows.length < 4) {
-    rows = await fetchOutcomes({})
-    scope = 'all'
-  }
-
-  const scopeLabel =
-    scope === 'client_trade'
-      ? `${client} ${trade} jobs specifically`
-      : scope === 'client'
-        ? `${client} jobs across trades (not enough ${trade ?? 'this trade'}-specific history yet)`
-        : scope === 'trade'
-          ? `${trade} jobs generally (not enough history for ${client ?? 'this client'} specifically)`
-          : 'jobs generally (not enough labeled history yet)'
-
-  if (!rows.length) return { contextText: '', scopeLabel, n: 0 }
-
-  const approved = rows.filter((r) => r.outcome === 'approved')
-  const pushedBack = rows.filter((r) => r.outcome === 'rejected' || r.outcome === 'revision_requested')
-
-  const priceStats = (set: OutcomeRow[]) => {
-    const priced = set.filter((r) => r.total_price != null && !Number.isNaN(Number(r.total_price)))
-    if (!priced.length) return null
-    const prices = priced.map((r) => Number(r.total_price))
-    return { avg: round2(prices.reduce((s, p) => s + p, 0) / prices.length), min: round2(Math.min(...prices)), max: round2(Math.max(...prices)), n: priced.length }
-  }
-  const approvedPrice = priceStats(approved)
-  const pushedBackPrice = priceStats(pushedBack)
-
-  const quotes = pushedBack
-    .filter((r) => r.client_feedback && r.client_feedback.trim())
-    .slice(0, 4)
-    .map((r) => {
-      const label = r.outcome === 'rejected' ? 'rejected' : 'asked to revise/lower'
-      const priceNote = r.total_price != null ? `, total was $${r.total_price}` : ''
-      return `  - "${r.client_feedback!.trim().slice(0, 160)}" (${label}${priceNote})`
-    })
-    .join('\n')
-
-  const contextText = `
-Historical outcomes for ${scopeLabel}: of ${rows.length} labeled quotes, ${approved.length} approved and ${pushedBack.length} rejected/revision-requested.${
-    approvedPrice ? ` Approved totals averaged $${approvedPrice.avg} (range $${approvedPrice.min}-$${approvedPrice.max}, n=${approvedPrice.n}).` : ''
-  }${pushedBackPrice ? ` Rejected/revision totals averaged $${pushedBackPrice.avg} (range $${pushedBackPrice.min}-$${pushedBackPrice.max}, n=${pushedBackPrice.n}).` : ''}${
-    quotes ? `\nWhat clients said when pushing back:\n${quotes}` : ''
-  }`.trim()
-
-  return { contextText, scopeLabel, n: rows.length }
-}
 
 async function geminiErrorMessage(res: Response): Promise<string> {
   if (res.status === 429) return "Gemini's rate limit is maxed out. Wait about a minute before trying again."
