@@ -19,11 +19,11 @@ function errMsg(err: unknown): string {
 // column before Invoiced On that this map has no slot for, which used to
 // mean Invoiced On got read from the wrong position (and Completion Date
 // silently dropped). Reading every column by its real header name fixes
-// that regardless of where it sits. Index 5 ('col_blank1') stays reserved:
-// the store/client column's position was never trusted even before this,
-// since it was added after the fact and may not sit at a fixed index --
-// instead we look up the table's real header row and find whichever column
-// is named like "Store" or "Client".
+// that regardless of where it sits. Index 5 ('col_blank1') is unused --
+// it's a leftover placeholder kept only so the other fields' positions
+// below it still line up with their original indexes. `client` isn't in
+// this map at all: it comes from the table's worksheet/tab name instead
+// (see syncOneSource), not from any column in the sheet.
 const COLUMN_MAP = [
   'wo', 'dispatcher', 'status', 'wo_date', 'eta',
   'col_blank1', 'trade', 'subtrade', 'address', 'city', 'state',
@@ -38,7 +38,8 @@ COLUMN_MAP.forEach((col, i) => {
   if (col !== 'col_blank1') FALLBACK_INDEX[col] = i
 })
 
-// Every field except store/client, matched against a sheet's real header
+// Every field except client (which comes from the worksheet/tab name, not
+// a column -- see syncOneSource), matched against a sheet's real header
 // text instead of trusting its position. Headers vary a bit sheet to sheet
 // (trailing spaces, "WorkOrder" vs "Work Orders", a stray typo like
 // "Completeion Date") so these are forgiving on whitespace/plural/typo,
@@ -92,8 +93,6 @@ function resolveColumnIndexes(tableColumns: { name: string; index: number }[]): 
   }
   return { indexes, fallbackFields }
 }
-
-const CLIENT_HEADER_PATTERN = /store|client/i
 
 const NUMERIC_COLS = new Set(['nte', 'cost', 'profit_pct'])
 const DATE_COLS = new Set(['wo_date', 'eta', 'quote_sent_on', 'invoiced_on'])
@@ -199,20 +198,32 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
     return { entity: source.entityName, table: source.tableName, step: 'resolve_share', error: 'missing driveId/itemId', raw: driveItemData }
   }
 
-  // Look up the table's actual header row so we can find every field --
-  // store/client included -- by name instead of assuming a fixed position.
-  const columnsRes = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/columns?$select=name,index`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  )
+  // Look up the table's actual header row (to find every field by name --
+  // see resolveColumnIndexes) and which worksheet/tab this table lives on,
+  // in parallel. The tab name IS the client -- every entity's workbook is
+  // organized one tab per client (e.g. "CBRE", "O'Reilly", "BrandPoint") --
+  // so that's what fills work_orders.client, rather than trying to find a
+  // "Store"/"Client" column inside the sheet (which, where one exists,
+  // actually holds the specific store/brand being serviced, not the client).
+  const [columnsRes, tableRes] = await Promise.all([
+    fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/columns?$select=name,index`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    ),
+    fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}?$select=name&$expand=worksheet($select=name)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    ),
+  ])
   const columnsData = await columnsRes.json()
   if (!columnsRes.ok) {
     return { entity: source.entityName, table: source.tableName, step: 'columns', error: columnsData, driveId, itemId }
   }
   const tableColumns: { name: string; index: number }[] = columnsData.value ?? []
-  const clientColumn = tableColumns.find((c) => CLIENT_HEADER_PATTERN.test(c.name ?? ''))
-  const clientColumnIndex = clientColumn ? clientColumn.index : null
   const { indexes: fieldIndex, fallbackFields } = resolveColumnIndexes(tableColumns)
+
+  const tableData = await tableRes.json()
+  const worksheetName: string | null = tableRes.ok ? (tableData.worksheet?.name ?? null)?.trim() || null : null
 
   const rowsRes = await fetch(
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/rows`,
@@ -223,6 +234,9 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
     return { entity: source.entityName, table: source.tableName, step: 'rows', error: rowsData, driveId, itemId }
   }
 
+  // If the worksheet-name lookup above failed for some reason, leave
+  // `client` out of the upserted columns entirely (rather than writing
+  // null) so an already-correct value from a previous sync isn't wiped.
   const rawRows = rowsData.value ?? []
   const allRecords = rawRows.map((row: any) => {
     const values = row.values[0]
@@ -230,7 +244,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
     for (const col of Object.keys(fieldIndex)) {
       record[col] = sanitizeValue(col, values[fieldIndex[col]])
     }
-    record.client = clientColumnIndex !== null ? sanitizeValue('client', values[clientColumnIndex]) : null
+    if (worksheetName) record.client = worksheetName
     record.entity_id = source.entityId
     return record
   })
@@ -250,7 +264,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
     table: source.tableName,
     synced: records.length,
     skipped,
-    clientColumnFound: clientColumn ? clientColumn.name : null,
+    client: worksheetName,
     fallbackFields: fallbackFields.length > 0 ? fallbackFields : undefined,
   }
 }
