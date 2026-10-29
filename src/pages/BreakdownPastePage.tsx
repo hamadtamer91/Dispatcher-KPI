@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ClipboardCheck, Loader2, Copy, Check } from 'lucide-react'
+import { ArrowLeft, ClipboardCheck, Loader2, Copy, Check, Plus, Trash2, Wand2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useEntityScope } from '../contexts/EntityScopeContext'
 import { useClients } from '../hooks/useClients'
@@ -135,6 +135,89 @@ export function BreakdownPastePage() {
   const [result, setResult] = useState<AuditTextResult | null>(null)
   const [copied, setCopied] = useState(false)
 
+  // The narrative and line items shown below are editable copies of the
+  // last check/edit result -- hand edits here are purely local (nothing is
+  // saved or re-validated) until the dispatcher asks the AI to apply a
+  // change, which replaces `result` (and these) with a fresh response.
+  const [editableScope, setEditableScope] = useState('')
+  const [editableFindings, setEditableFindings] = useState('')
+  const [editableRecommendation, setEditableRecommendation] = useState('')
+  const [editableItems, setEditableItems] = useState<CorrectedLineItem[]>([])
+
+  useEffect(() => {
+    if (!result) return
+    setEditableScope(result.narrative_scope)
+    setEditableFindings(result.narrative_findings)
+    setEditableRecommendation(result.narrative_recommendation)
+    setEditableItems(result.corrected_line_items)
+  }, [result])
+
+  const editableTotal = useMemo(() => editableItems.reduce((s, li) => s + li.quantity * li.unit_price, 0), [editableItems])
+  const nteNum = nte.trim() ? Number(nte) : null
+
+  const updateItem = (i: number, patch: Partial<CorrectedLineItem>) => {
+    setEditableItems((items) => items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)))
+  }
+  const removeItem = (i: number) => {
+    setEditableItems((items) => items.filter((_, idx) => idx !== i))
+  }
+  const addItem = () => {
+    setEditableItems((items) => [...items, { kind: 'other', description: '', role_name: undefined, quantity: 1, unit_price: 0, changed: false, note: null }])
+  }
+
+  const [editInstruction, setEditInstruction] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [editError, setEditError] = useState('')
+
+  const handleApplyEdit = async () => {
+    if (!editInstruction.trim()) {
+      setEditError('Describe what to change first.')
+      return
+    }
+    setEditing(true)
+    setEditError('')
+    try {
+      const { data, error: err } = await supabase.functions.invoke('edit-proposal-breakdown', {
+        body: {
+          entity_id: matchedEntityId ?? activeEntityId,
+          wo: wo.trim() || null,
+          client_name: clientName.trim() || null,
+          trade_name: tradeName.trim() || null,
+          city: city.trim() || null,
+          state: state.trim() || null,
+          priority: priority || null,
+          nte: nte.trim() ? Number(nte) : null,
+          narrative_scope: editableScope,
+          narrative_findings: editableFindings,
+          narrative_recommendation: editableRecommendation,
+          line_items: editableItems.map(({ kind, description, role_name, quantity, unit_price }) => ({ kind, description, role_name, quantity, unit_price })),
+          instruction: editInstruction,
+        },
+      })
+      if (err) {
+        let message = err.message
+        try {
+          const ctx = (err as unknown as { context?: Response }).context
+          if (ctx) {
+            const body = await ctx.clone().json()
+            if (body?.error) message = body.error
+          }
+        } catch {
+          // fall back to err.message
+        }
+        throw new Error(message)
+      }
+      if (data?.error) throw new Error(data.error)
+      setResult(data as AuditTextResult)
+      setEditInstruction('')
+      setCopied(false)
+    } catch (e) {
+      setEditError((e as Error).message)
+    } finally {
+      setEditing(false)
+    }
+  }
+
   const handleCheck = async () => {
     if (!proposalText.trim()) {
       setError('Paste the proposal text first.')
@@ -183,14 +266,14 @@ export function BreakdownPastePage() {
   const copyText = () => {
     if (!result) return
     const lines: string[] = []
-    if (result.narrative_scope) lines.push(result.narrative_scope, '')
-    if (result.narrative_findings) lines.push('Findings:', result.narrative_findings, '')
-    if (result.narrative_recommendation) lines.push('Recommendation:', result.narrative_recommendation, '')
+    if (editableScope) lines.push(editableScope, '')
+    if (editableFindings) lines.push('Findings:', editableFindings, '')
+    if (editableRecommendation) lines.push('Recommendation:', editableRecommendation, '')
     lines.push('Breakdown:')
-    for (const li of result.corrected_line_items) {
+    for (const li of editableItems) {
       lines.push(`- ${li.description} -- qty ${li.quantity} x $${li.unit_price.toFixed(2)} = $${(li.quantity * li.unit_price).toFixed(2)}`)
     }
-    lines.push('', `Total: $${result.subtotal_after.toFixed(2)}`)
+    lines.push('', `Total: $${editableTotal.toFixed(2)}`)
     navigator.clipboard.writeText(lines.join('\n')).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
@@ -326,46 +409,120 @@ export function BreakdownPastePage() {
                 {copied ? 'Copied' : 'Copy as text'}
               </Button>
             </div>
-            {result.narrative_scope && <p className="text-sm text-ink-soft whitespace-pre-wrap">{result.narrative_scope}</p>}
+            <div className="space-y-2">
+              <div>
+                <label className="text-xs font-semibold text-ink-faint">Scope of Work</label>
+                <textarea
+                  value={editableScope}
+                  onChange={(e) => setEditableScope(e.target.value)}
+                  rows={3}
+                  className="field mt-1 w-full text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-ink-faint">Findings</label>
+                <textarea
+                  value={editableFindings}
+                  onChange={(e) => setEditableFindings(e.target.value)}
+                  rows={2}
+                  placeholder="(none)"
+                  className="field mt-1 w-full text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-ink-faint">Recommendation</label>
+                <textarea
+                  value={editableRecommendation}
+                  onChange={(e) => setEditableRecommendation(e.target.value)}
+                  rows={2}
+                  placeholder="(none)"
+                  className="field mt-1 w-full text-sm"
+                />
+              </div>
+            </div>
 
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="table-head-row">
-                    <th className="px-4 py-2">Description</th>
-                    <th className="px-4 py-2 text-right">Qty</th>
-                    <th className="px-4 py-2 text-right">Unit Price</th>
+                    <th className="px-2 py-2 text-left">Kind</th>
+                    <th className="px-2 py-2">Description</th>
+                    <th className="px-2 py-2 text-right">Qty</th>
+                    <th className="px-2 py-2 text-right">Unit Price</th>
                     <th className="px-4 py-2 text-right">Total</th>
+                    <th className="px-2 py-2 w-8" />
                   </tr>
                 </thead>
                 <tbody>
-                  {result.corrected_line_items.map((li, i) => (
-                    <tr key={i} className="table-row">
-                      <td className="px-4 py-2.5 text-ink">
-                        {li.description}
+                  {editableItems.map((li, i) => (
+                    <tr key={i} className="table-row align-top">
+                      <td className="px-2 py-2.5">
+                        <select
+                          value={li.kind}
+                          onChange={(e) => updateItem(i, { kind: e.target.value as CorrectedLineItem['kind'] })}
+                          className="field text-xs"
+                        >
+                          <option value="labor">Labor</option>
+                          <option value="part">Part</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-2.5 text-ink">
+                        <input
+                          type="text"
+                          value={li.description}
+                          onChange={(e) => updateItem(i, { description: e.target.value })}
+                          className="field w-full"
+                        />
                         {li.changed && <Badge variant="brand">Fixed</Badge>}
                         {li.changed && li.note && <p className="text-xs text-ink-faint mt-0.5">{li.note}</p>}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-ink-soft tabular-nums">{li.quantity}</td>
-                      <td className="px-4 py-2.5 text-right text-ink-soft tabular-nums">${li.unit_price.toFixed(2)}</td>
+                      <td className="px-2 py-2.5 text-right">
+                        <input
+                          type="number"
+                          value={li.quantity}
+                          onChange={(e) => updateItem(i, { quantity: Number(e.target.value) || 0 })}
+                          className="field w-16 text-right tabular-nums"
+                        />
+                      </td>
+                      <td className="px-2 py-2.5 text-right">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={li.unit_price}
+                          onChange={(e) => updateItem(i, { unit_price: Number(e.target.value) || 0 })}
+                          className="field w-24 text-right tabular-nums"
+                        />
+                      </td>
                       <td className="px-4 py-2.5 text-right text-ink tabular-nums">${(li.quantity * li.unit_price).toFixed(2)}</td>
+                      <td className="px-2 py-2.5 text-right">
+                        <button type="button" onClick={() => removeItem(i)} className="text-ink-faint hover:text-danger" title="Remove line">
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={3} className="px-4 py-2.5 text-right font-bold text-ink">Total</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-ink tabular-nums">${result.subtotal_after.toFixed(2)}</td>
+                    <td colSpan={4} className="px-4 py-2.5 text-right font-bold text-ink">Total</td>
+                    <td className="px-4 py-2.5 text-right font-bold text-ink tabular-nums">${editableTotal.toFixed(2)}</td>
+                    <td />
                   </tr>
-                  {Math.abs(result.subtotal_after - result.subtotal_before) > 0.01 && (
+                  {nteNum != null && nteNum > 0 && editableTotal > nteNum + 0.01 && (
                     <tr>
-                      <td colSpan={3} className="px-4 py-1 text-right text-xs text-ink-faint">As pasted</td>
-                      <td className="px-4 py-1 text-right text-xs text-ink-faint tabular-nums">${result.subtotal_before.toFixed(2)}</td>
+                      <td colSpan={6} className="px-4 py-1 text-right text-xs text-danger">
+                        Over the ${nteNum.toFixed(2)} NTE by ${(editableTotal - nteNum).toFixed(2)}
+                      </td>
                     </tr>
                   )}
                 </tfoot>
               </table>
             </div>
+
+            <Button variant="ghost" size="sm" icon={<Plus size={14} />} onClick={addItem}>
+              Add line
+            </Button>
           </Panel>
 
           {result.fixes_applied.length > 0 && (
@@ -405,6 +562,30 @@ export function BreakdownPastePage() {
                 Checked against {result.ai_learning.outcomes_considered} historical AI Learning outcomes ({result.ai_learning.scope_label}).
               </p>
             )}
+          </Panel>
+
+          <Panel className="p-4 space-y-2">
+            <p className="text-sm font-bold text-ink">Ask AI to edit this breakdown</p>
+            <p className="text-xs text-ink-faint">
+              Describe a change in plain language -- e.g. "add a $50 disposal fee", "the narrative should say the door was replaced, not repaired", "remove the Assessment Fee line". Only what you ask for changes; nothing else is re-priced or corrected.
+            </p>
+            <textarea
+              value={editInstruction}
+              onChange={(e) => setEditInstruction(e.target.value)}
+              placeholder="What should change?"
+              rows={2}
+              className="field w-full text-sm"
+            />
+            {editError && <p className="text-sm text-danger">{editError}</p>}
+            <Button
+              variant="primary"
+              size="sm"
+              icon={editing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+              disabled={editing}
+              onClick={handleApplyEdit}
+            >
+              {editing ? 'Applying...' : 'Apply Edit'}
+            </Button>
           </Panel>
         </>
       )}
