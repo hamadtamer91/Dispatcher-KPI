@@ -48,7 +48,7 @@ export function BreakdownPage() {
             <thead>
               <tr className="table-head-row">
                 <th className="px-4 py-3">WO</th>
-                <th className="px-4 py-3">Store</th>
+                <th className="px-4 py-3">Client</th>
                 <th className="px-4 py-3">City / State</th>
                 <th className="px-4 py-3">Priority</th>
                 <th className="px-4 py-3">Status</th>

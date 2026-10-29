@@ -305,7 +305,7 @@ export function ProposalDetailPage({ role }: { role?: Role }) {
         <div>
           <h2 className="text-xl font-extrabold text-ink tracking-tight">Proposal — WO {proposal.wo}</h2>
           <p className="text-sm text-ink-soft mt-1">
-            {proposal.client_name || workOrder?.client || 'Unassigned store'} · {proposal.trade_name || workOrder?.trade || 'n/a'} · v{proposal.version}
+            {proposal.client_name || workOrder?.client || 'Unassigned client'} · {proposal.trade_name || workOrder?.trade || 'n/a'} · v{proposal.version}
           </p>
         </div>
         <Badge variant={STATUS_VARIANT[proposal.status]}>{PROPOSAL_STATUS_LABELS[proposal.status]}</Badge>

@@ -63,7 +63,7 @@ export function WorkOrderModal({ initial, statusOptions, onClose, onSave }: Prop
             <Field label="Dispatcher">
               <input value={form.dispatcher ?? ''} onChange={(e) => update('dispatcher', e.target.value)} className={inputCls} />
             </Field>
-            <Field label="Store">
+            <Field label="Client">
               <input value={form.client ?? ''} onChange={(e) => update('client', e.target.value)} className={inputCls} />
             </Field>
             <Field label="Trade">

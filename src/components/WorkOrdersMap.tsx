@@ -1,4 +1,4 @@
-// Reusable Leaflet map of work orders, with search/store/status filters, site-level
+// Reusable Leaflet map of work orders, with search/client/status filters, site-level
 // marker grouping (several jobs at the same address collapse into one pin with a count
 // badge), and a status-colored legend. Used by the admin's full Map page, the admin's
 // per-dispatcher detail page, and the dispatcher's own "My Jobs" view -- each just passes
@@ -85,7 +85,7 @@ function JobDetail({ w }: { w: WorkOrder }) {
         {statusPill(w.status)}
       </div>
       <p className="text-xs text-ink-soft">
-        <span className="text-ink-faint">Store:</span> {w.client || 'Unassigned'}
+        <span className="text-ink-faint">Client:</span> {w.client || 'Unassigned'}
         {w.dispatcher && <> · <span className="text-ink-faint">Dispatcher:</span> {w.dispatcher}</>}
       </p>
       {(w.trade || w.subtrade) && (
@@ -119,17 +119,17 @@ export function WorkOrdersMap({
   showFilters?: boolean
 }) {
   const [search, setSearch] = useState('')
-  const [store, setStore] = useState('')
+  const [client, setClient] = useState('')
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set())
 
-  const stores = useMemo(
+  const clients = useMemo(
     () => [...new Set(workOrders.map((w) => w.client?.trim()).filter((v): v is string => Boolean(v)))].sort(),
     [workOrders]
   )
 
   const filtered = useMemo(() => {
     return workOrders.filter((w) => {
-      if (store && (w.client?.trim() || '') !== store) return false
+      if (client && (w.client?.trim() || '') !== client) return false
       if (statusFilter.size && !statusFilter.has(w.status ?? '')) return false
       if (search.trim()) {
         const q = search.trim().toLowerCase()
@@ -138,7 +138,7 @@ export function WorkOrdersMap({
       }
       return true
     })
-  }, [workOrders, store, statusFilter, search])
+  }, [workOrders, client, statusFilter, search])
 
   const sites = useMemo(() => {
     const map = new Map<string, Site>()
@@ -170,18 +170,18 @@ export function WorkOrdersMap({
         <div className="flex flex-wrap items-center gap-3">
           <input
             type="text"
-            placeholder="Search WO #, store, dispatcher, address..."
+            placeholder="Search WO #, client, dispatcher, address..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="field w-72"
           />
           <select
-            value={store}
-            onChange={(e) => setStore(e.target.value)}
+            value={client}
+            onChange={(e) => setClient(e.target.value)}
             className="field w-auto"
           >
-            <option value="">All stores</option>
-            {stores.map((s) => <option key={s} value={s}>{s}</option>)}
+            <option value="">All clients</option>
+            {clients.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
           <div className="flex flex-wrap gap-1.5">
             {STATUS_OPTIONS.map((s) => {
