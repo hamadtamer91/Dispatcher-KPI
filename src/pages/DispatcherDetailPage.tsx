@@ -15,9 +15,8 @@ const DETAIL_COLUMNS: (keyof WorkOrder)[] = [
   'quote_sent_on', 'invoiced_on',
 ]
 
-// 'client' is stored as-is in the database, but the sheet/UI calls this a "Store".
 const COLUMN_LABELS: Partial<Record<keyof WorkOrder, string>> = {
-  client: 'Store',
+  client: 'Client',
 }
 
 function columnLabel(c: keyof WorkOrder): string {

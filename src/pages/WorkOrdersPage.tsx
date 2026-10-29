@@ -14,10 +14,9 @@ const COLUMNS: (keyof WorkOrder)[] = [
 ]
 
 // Display labels for columns whose field name doesn't match what should be shown
-// to the user. 'client' is stored as-is in the database, but the sheet/UI calls
-// this a "Store" (the physical client location a work order was opened for).
+// to the user.
 const COLUMN_LABELS: Partial<Record<keyof WorkOrder, string>> = {
-  client: 'Store',
+  client: 'Client',
 }
 
 function columnLabel(c: keyof WorkOrder): string {
@@ -31,14 +30,15 @@ function statusBadge(status: string | null) {
   return <Badge variant={variant}>{status}</Badge>
 }
 
-// CSV header names that should map onto the internal `client` field on import,
-// so a sheet using "Store" as its column header still populates correctly.
+// CSV header names that should map onto the internal `client` field on import.
+// 'store' is kept for backward compatibility with CSVs exported before this
+// column was relabeled "Client".
 const CLIENT_HEADER_ALIASES = new Set(['client', 'store'])
 
 function toExportRow(w: WorkOrder): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(w)) {
-    out[key === 'client' ? 'Store' : key] = value
+    out[key === 'client' ? 'Client' : key] = value
   }
   return out
 }

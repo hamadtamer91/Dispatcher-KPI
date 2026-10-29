@@ -68,7 +68,7 @@ export function ProposalsPage({ role, dispatcherName }: { role: Role; dispatcher
           <thead>
             <tr className="table-head-row">
               <th className="px-4 py-3">WO</th>
-              <th className="px-4 py-3">Store</th>
+              <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Dispatcher</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Version</th>

@@ -15,7 +15,7 @@ export function ClientReportsPage() {
     <div className="space-y-4">
       <PageHeader
         title="Client Reports"
-        description={'Grouped by the Store field on each work order. Jobs with no store recorded are grouped under "Unassigned" — add a Store column to the sheet (as the last column) to populate this.'}
+        description={'Grouped by the Client field on each work order, filled in automatically from the Excel tab/sheet name each work order synced from. Jobs with no client recorded are grouped under "Unassigned".'}
       />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {clients.map((c) => (

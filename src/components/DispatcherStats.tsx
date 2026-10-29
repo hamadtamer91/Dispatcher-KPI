@@ -147,7 +147,7 @@ export function DispatcherStats({
           <HBarChart data={tradeBars} />
         </ChartCard>
 
-        <ChartCard title="Jobs by Store" subtitle="Grouped by the Store field on each work order">
+        <ChartCard title="Jobs by Client" subtitle="Grouped by the Client field on each work order">
           <HBarChart data={clientBars} />
         </ChartCard>
 

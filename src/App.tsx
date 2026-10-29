@@ -112,7 +112,7 @@ export default function App() {
           label: 'Admin',
           items: [
             { key: 'users' as Tab, label: 'Manage Users', icon: <Users size={17} /> },
-            { key: 'clients' as Tab, label: 'Store Reports', icon: <Building2 size={17} /> },
+            { key: 'clients' as Tab, label: 'Client Reports', icon: <Building2 size={17} /> },
           ],
         }]
       : []),
