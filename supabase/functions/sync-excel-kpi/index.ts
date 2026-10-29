@@ -205,13 +205,13 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   // so that's what fills work_orders.client, rather than trying to find a
   // "Store"/"Client" column inside the sheet (which, where one exists,
   // actually holds the specific store/brand being serviced, not the client).
-  const [columnsRes, tableRes] = await Promise.all([
+  const [columnsRes, worksheetRes] = await Promise.all([
     fetch(
       `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/columns?$select=name,index`,
       { headers: { Authorization: `Bearer ${token}` } }
     ),
     fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}?$select=name&$expand=worksheet($select=name)`,
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/worksheet?$select=name`,
       { headers: { Authorization: `Bearer ${token}` } }
     ),
   ])
@@ -222,8 +222,9 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
   const tableColumns: { name: string; index: number }[] = columnsData.value ?? []
   const { indexes: fieldIndex, fallbackFields } = resolveColumnIndexes(tableColumns)
 
-  const tableData = await tableRes.json()
-  const worksheetName: string | null = tableRes.ok ? (tableData.worksheet?.name ?? null)?.trim() || null : null
+  const worksheetData = await worksheetRes.json()
+  const worksheetName: string | null = worksheetRes.ok ? ((worksheetData.name ?? '').trim() || null) : null
+  const worksheetLookupError = worksheetRes.ok ? undefined : worksheetData
 
   const rowsRes = await fetch(
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook/tables/${source.tableName}/rows`,
@@ -265,6 +266,7 @@ async function syncOneSource(source: SourceConfig, supabase: ReturnType<typeof c
     synced: records.length,
     skipped,
     client: worksheetName,
+    worksheetLookupError,
     fallbackFields: fallbackFields.length > 0 ? fallbackFields : undefined,
   }
 }
