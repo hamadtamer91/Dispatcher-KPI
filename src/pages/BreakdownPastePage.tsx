@@ -263,17 +263,98 @@ export function BreakdownPastePage() {
     }
   }
 
+  // Matches the paste-ready format dispatchers send out: WO#, narrative,
+  // then Incurred (Trip/Assessment flat fees), Labor (grouped under "Day
+  // 1" -- there's no multi-day tracking here, so every job prints as one
+  // day), Parts & Materials, and a Subtotal / Tax / Grand Total footer.
+  // Labor lines with the same hours and rate are combined into one "N
+  // techs"/"helpers" line, same as a dispatcher would write it by hand.
+  // Any section with nothing in it is left out entirely.
   const copyText = () => {
     if (!result) return
+    const round2 = (n: number) => Math.round(n * 100) / 100
+    const fmt = (n: number) => `$${round2(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const DASH = '-'.repeat(70)
+    const isTrip = (li: CorrectedLineItem) => /trip/i.test(li.role_name || '') || /trip/i.test(li.description || '')
+    const isAssessment = (li: CorrectedLineItem) => /assess/i.test(li.role_name || '') || /assess/i.test(li.description || '')
+    const isHelper = (li: CorrectedLineItem) => /helper/i.test(li.role_name || '') || /helper/i.test(li.description || '')
+    const isTax = (li: CorrectedLineItem) => li.kind === 'other' && /sales tax/i.test(li.description || '')
+
+    const incurred = editableItems.filter((li) => isTrip(li) || isAssessment(li))
+    const laborOther = editableItems.filter((li) => li.kind === 'labor' && !isTrip(li) && !isAssessment(li))
+    const parts = editableItems.filter((li) => li.kind === 'part')
+    const taxLine = editableItems.find(isTax)
+    const otherMisc = editableItems.filter((li) => li.kind === 'other' && li !== taxLine)
+
     const lines: string[] = []
-    if (editableScope) lines.push(editableScope, '')
-    if (editableFindings) lines.push('Findings:', editableFindings, '')
-    if (editableRecommendation) lines.push('Recommendation:', editableRecommendation, '')
-    lines.push('Breakdown:')
-    for (const li of editableItems) {
-      lines.push(`- ${li.description} -- qty ${li.quantity} x $${li.unit_price.toFixed(2)} = $${(li.quantity * li.unit_price).toFixed(2)}`)
+    lines.push(`WO#: ${wo.trim() || '(not set)'}`, DASH)
+    lines.push(editableScope || '')
+    if (editableFindings) lines.push('', 'Findings:', editableFindings)
+    if (editableRecommendation) lines.push('', 'Recommendation:', editableRecommendation)
+    lines.push(DASH)
+
+    if (incurred.length > 0) {
+      lines.push('Incurred:', '')
+      let incurredTotal = 0
+      for (const li of incurred) {
+        const total = li.quantity * li.unit_price
+        incurredTotal += total
+        lines.push(`  ${isTrip(li) ? 'Trip' : 'Assessment'}: ${fmt(total)}`)
+      }
+      lines.push('', `  Total: ${fmt(incurredTotal)}`, DASH)
     }
-    lines.push('', `Total: $${editableTotal.toFixed(2)}`)
+
+    if (laborOther.length > 0) {
+      lines.push('Labor:', '', 'Day 1', '')
+      const groups = new Map<string, { quantity: number; unit_price: number; helper: boolean; count: number }>()
+      for (const li of laborOther) {
+        const helper = isHelper(li)
+        const key = `${helper}|${li.quantity}|${li.unit_price}`
+        const g = groups.get(key)
+        if (g) g.count += 1
+        else groups.set(key, { quantity: li.quantity, unit_price: li.unit_price, helper, count: 1 })
+      }
+      let laborTotal = 0
+      for (const g of groups.values()) {
+        const total = g.count * g.quantity * g.unit_price
+        laborTotal += total
+        const roleWord = g.helper ? (g.count === 1 ? 'helper' : 'helpers') : g.count === 1 ? 'tech' : 'techs'
+        lines.push(`${g.quantity} hours labor ${g.count} ${roleWord}: ${fmt(total)}`)
+      }
+      lines.push('', `Labor Total: ${fmt(laborTotal)}`, DASH)
+    }
+
+    if (parts.length > 0) {
+      lines.push('Parts & Materials:', '')
+      let partsTotal = 0
+      for (const li of parts) {
+        const total = li.quantity * li.unit_price
+        partsTotal += total
+        lines.push(`- ${li.description} x${li.quantity}: ${fmt(total)}`)
+      }
+      lines.push('', ` Total Parts & Materials: ${fmt(partsTotal)}`, DASH)
+    }
+
+    if (otherMisc.length > 0) {
+      lines.push('Other:', '')
+      let otherTotal = 0
+      for (const li of otherMisc) {
+        const total = li.quantity * li.unit_price
+        otherTotal += total
+        lines.push(`- ${li.description}: ${fmt(total)}`)
+      }
+      lines.push('', `Other Total: ${fmt(otherTotal)}`, DASH)
+    }
+
+    const taxAmount = taxLine ? taxLine.quantity * taxLine.unit_price : 0
+    const subtotal = editableTotal - taxAmount
+    lines.push(`Subtotal: ${fmt(subtotal)}`)
+    if (taxLine) {
+      const pct = subtotal > 0 ? (taxAmount / subtotal) * 100 : 0
+      lines.push(`Tax (${pct.toFixed(2)}%): ${fmt(taxAmount)}`)
+    }
+    lines.push(DASH, `GRAND TOTAL: ${fmt(editableTotal)}`)
+
     navigator.clipboard.writeText(lines.join('\n')).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
