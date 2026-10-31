@@ -6,6 +6,9 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+// Roles whose password an Admin may reset -- and only inside their own entity.
+const ADMIN_CAN_MANAGE = ['account_manager', 'team_leader', 'dispatcher']
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -18,11 +21,11 @@ function errMsg(err: unknown): string {
   try { return JSON.stringify(err) } catch { return String(err) }
 }
 
-/** Lets a Super Admin set a new password for another user's login (the
- *  "Manage Users" page's password-reset button). Only a Super Admin may
- *  call this -- checked here against the caller's own profile, since the
- *  password itself can only be set with the service-role key, which the
- *  frontend never holds. */
+/** Lets a Super Admin -- or an Admin, for Account Managers, Team Leaders and
+ *  Dispatchers in their own entity -- set a new password for another user's
+ *  login (the "Manage Users" page's password-reset button). Checked here
+ *  against the caller's own profile, since the password itself can only be
+ *  set with the service-role key, which the frontend never holds. */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS })
@@ -48,11 +51,11 @@ Deno.serve(async (req) => {
     }
     const { data: callerProfile, error: callerProfileErr } = await admin
       .from('profiles')
-      .select('role')
+      .select('role, entity_id')
       .eq('id', callerData.user.id)
       .single()
-    if (callerProfileErr || callerProfile?.role !== 'super_admin') {
-      return json({ error: 'Only a Super Admin can change another user\'s password.' }, 403)
+    if (callerProfileErr || !callerProfile || (callerProfile.role !== 'super_admin' && callerProfile.role !== 'admin')) {
+      return json({ error: 'Only a Super Admin or Admin can change another user\'s password.' }, 403)
     }
 
     const body = await req.json()
@@ -67,7 +70,7 @@ Deno.serve(async (req) => {
 
     const { data: targetProfile, error: targetErr } = await admin
       .from('profiles')
-      .select('id, display_name')
+      .select('id, display_name, role, entity_id')
       .eq('id', userId)
       .maybeSingle()
     if (targetErr) {
@@ -75,6 +78,12 @@ Deno.serve(async (req) => {
     }
     if (!targetProfile) {
       return json({ error: 'No login found for that user.' }, 404)
+    }
+
+    if (callerProfile.role === 'admin') {
+      if (!ADMIN_CAN_MANAGE.includes(targetProfile.role) || targetProfile.entity_id !== callerProfile.entity_id) {
+        return json({ error: 'An Admin can only change passwords for Account Managers, Team Leaders and Dispatchers in their own entity.' }, 403)
+      }
     }
 
     const { error: updateErr } = await admin.auth.admin.updateUserById(userId, { password: newPassword })

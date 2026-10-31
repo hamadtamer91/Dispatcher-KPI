@@ -3,8 +3,9 @@ import { supabase } from '../lib/supabase'
 import { useEntityScope } from '../contexts/EntityScopeContext'
 import type { LaborRate, PartItem } from '../lib/types'
 
-/** Labor rates + parts catalog for the active entity, editable by
- *  super_admin, data_entry, and dispatcher. */
+/** Labor rates + parts catalog for the active entity. Everyone in the entity
+ *  can read them; only roles in canEditPriceLists() (lib/permissions.ts) can
+ *  change them, and the database enforces the same. */
 export function usePriceLists() {
   const { activeEntityId } = useEntityScope()
   const [laborRates, setLaborRates] = useState<LaborRate[]>([])

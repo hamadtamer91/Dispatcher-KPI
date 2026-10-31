@@ -37,10 +37,19 @@ export function useProfiles() {
     refetch()
   }, [refetch])
 
+  // Puts a dispatcher on a team leader's team (or off any team with null).
+  // The database rejects a team leader from another entity or one that isn't
+  // a Team Leader account, so surface that message instead of failing silently.
+  const updateTeamLeader = useCallback(async (id: string, team_leader_id: string | null) => {
+    const { error } = await supabase.from('profiles').update({ team_leader_id }).eq('id', id)
+    if (error) throw error
+    refetch()
+  }, [refetch])
+
   const deleteProfile = useCallback(async (id: string) => {
     await supabase.from('profiles').delete().eq('id', id)
     refetch()
   }, [refetch])
 
-  return { profiles, loading, refetch, updateScorecard, updateEntity, updateRole, updateDispatcherName, deleteProfile }
+  return { profiles, loading, refetch, updateScorecard, updateEntity, updateRole, updateDispatcherName, updateTeamLeader, deleteProfile }
 }

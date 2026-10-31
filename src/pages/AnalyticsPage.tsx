@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { useProfiles } from '../hooks/useProfiles'
+import { useEntityScope } from '../contexts/EntityScopeContext'
+import { kpiScopeNames } from '../lib/permissions'
 import {
   computeAnalytics,
   computeDispatcherKPIs,
@@ -21,11 +23,23 @@ const SCORE_BUCKETS = [
 ]
 
 export function AnalyticsPage() {
-  const { wos, loading: woLoading } = useWorkOrders()
+  const { profile: viewer } = useEntityScope()
+  const { wos: allWos, loading: woLoading } = useWorkOrders()
   const { profiles, loading: pLoading } = useProfiles()
 
+  // A dispatcher already only receives their own jobs and a team leader gets
+  // narrowed to their team's here; everyone else sees every work order.
+  const scopeNames = useMemo(() => kpiScopeNames(viewer, profiles), [viewer, profiles])
+  const wos = useMemo(
+    () => (scopeNames ? allWos.filter((w) => scopeNames.has(w.dispatcher?.trim() ?? '')) : allWos),
+    [allWos, scopeNames],
+  )
+
   const analytics = useMemo(() => computeAnalytics(wos), [wos])
-  const kpis = useMemo(() => computeDispatcherKPIs(wos, profiles), [wos, profiles])
+  const kpis = useMemo(() => {
+    const all = computeDispatcherKPIs(wos, profiles)
+    return scopeNames ? all.filter((k) => scopeNames.has(k.dispatcherName)) : all
+  }, [wos, profiles, scopeNames])
   const ops = useMemo(() => computeOperationalKPIs(wos), [wos])
   const techKpis = useMemo(() => computeTechnicianKPIs(wos), [wos])
 
@@ -97,7 +111,16 @@ export function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Analytics" description="How the whole operation is performing, across every work order on file." />
+      <PageHeader
+        title="Analytics"
+        description={
+          viewer.role === 'dispatcher'
+            ? 'How your own jobs are performing.'
+            : viewer.role === 'team_leader'
+              ? "How your team's jobs are performing."
+              : 'How the whole operation is performing, across every work order on file.'
+        }
+      />
 
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         <StatTile label="Total Work Orders" value={analytics.totalJobs} />

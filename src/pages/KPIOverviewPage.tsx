@@ -3,26 +3,46 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { useProfiles } from '../hooks/useProfiles'
+import { useEntityScope } from '../contexts/EntityScopeContext'
 import { computeDispatcherKPIs } from '../lib/kpi'
+import { kpiScopeNames } from '../lib/permissions'
 import { PageHeader, ScoreBar, EmptyState } from '../components/ui'
 
 export function KPIOverviewPage() {
   const navigate = useNavigate()
+  const { profile: viewer } = useEntityScope()
   const { wos, loading: woLoading } = useWorkOrders()
   const { profiles, loading: pLoading } = useProfiles()
 
-  const kpis = useMemo(() => computeDispatcherKPIs(wos, profiles), [wos, profiles])
+  // A dispatcher only sees their own card and a team leader only their own
+  // team's; everyone else sees every dispatcher in the entity.
+  const scopeNames = useMemo(() => kpiScopeNames(viewer, profiles), [viewer, profiles])
+  const kpis = useMemo(() => {
+    const all = computeDispatcherKPIs(wos, profiles)
+    return scopeNames ? all.filter((k) => scopeNames.has(k.dispatcherName)) : all
+  }, [wos, profiles, scopeNames])
 
   if (woLoading || pLoading) {
     return <p className="text-sm text-ink-faint py-8 text-center">Loading KPIs...</p>
   }
 
+  const description =
+    viewer.role === 'dispatcher'
+      ? 'Your scorecard — open it for the full breakdown.'
+      : viewer.role === 'team_leader'
+        ? "Your team's dispatcher scorecards — open one for the full breakdown."
+        : 'Composite dispatcher scorecards — open one for the full breakdown.'
+
   return (
     <div>
-      <PageHeader title="KPI Overview" description="Composite dispatcher scorecards — open one for the full breakdown." />
+      <PageHeader title="KPI Overview" description={description} />
 
       {!kpis.length ? (
-        <EmptyState>No dispatcher activity yet to score.</EmptyState>
+        <EmptyState>
+          {viewer.role === 'team_leader' && !scopeNames?.size
+            ? 'No dispatchers are on your team yet. Ask an Admin to assign them to you in Manage Users.'
+            : 'No dispatcher activity yet to score.'}
+        </EmptyState>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {kpis.map((k) => (

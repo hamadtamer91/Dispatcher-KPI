@@ -16,6 +16,9 @@ interface EntityScopeValue {
   // other roles, since there's nothing to switch to.
   switchableEntities: { id: string; name: string }[]
   isSuperAdmin: boolean
+  // The signed-in user's own profile, so any page can check their role or
+  // team without every page needing it passed down as a prop.
+  profile: Profile
   setActiveEntityId: (id: string) => void
 }
 
@@ -53,9 +56,10 @@ export function EntityScopeProvider({ profile, children }: { profile: Profile; c
       activeEntityName,
       switchableEntities: isSuperAdmin ? entities.map((e) => ({ id: e.id, name: e.name })) : [],
       isSuperAdmin,
+      profile,
       setActiveEntityId,
     }
-  }, [isSuperAdmin, selected, profile.entity_id, entities])
+  }, [isSuperAdmin, selected, profile, entities])
 
   return <EntityScopeContext.Provider value={value}>{children}</EntityScopeContext.Provider>
 }

@@ -8,6 +8,8 @@ import {
 import { useAuth } from './hooks/useAuth'
 import { useLiveCallCount } from './hooks/useLiveCallCount'
 import { EntityScopeProvider, useEntityScope } from './contexts/EntityScopeContext'
+import { canAccessTab, ROLE_LABELS } from './lib/permissions'
+import type { TabKey } from './lib/permissions'
 import { LoginPage } from './pages/LoginPage'
 import { WorkOrdersPage } from './pages/WorkOrdersPage'
 import { KPIOverviewPage } from './pages/KPIOverviewPage'
@@ -26,9 +28,7 @@ import { TeamLeaderCheckPage } from './pages/TeamLeaderCheckPage'
 import { PriceListsPage } from './pages/PriceListsPage'
 import { DispatchAgentPage } from './pages/DispatchAgentPage'
 import { AiLearningPage } from './pages/AiLearningPage'
-
-type Tab = 'work_orders' | 'kpi' | 'analytics' | 'map' | 'users' | 'clients' | 'breakdown' | 'tl_check' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
-type DispatcherTab = 'jobs' | 'breakdown' | 'proposals' | 'price_lists' | 'ai_learning' | 'dispatch_agent'
+import type { Role } from './lib/types'
 
 interface NavEntry<T extends string> {
   key: T
@@ -46,20 +46,13 @@ interface NavGroup<T extends string> {
 export default function App() {
   const { session, profile, loading, error, signIn, signOut } = useAuth()
   const liveCallCount = useLiveCallCount(!!session)
-  const [tab, setTab] = useState<Tab>('work_orders')
-  const [dispatcherTab, setDispatcherTab] = useState<DispatcherTab>('jobs')
+  const [tab, setTab] = useState<TabKey>('work_orders')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
 
-  const goTab = (t: Tab) => {
+  const goTab = (t: TabKey) => {
     setTab(t)
-    navigate('/')
-    setMobileNavOpen(false)
-  }
-
-  const goDispatcherTab = (t: DispatcherTab) => {
-    setDispatcherTab(t)
     navigate('/')
     setMobileNavOpen(false)
   }
@@ -83,12 +76,21 @@ export default function App() {
     )
   }
 
-  const isDispatcherOnly = profile.role === 'dispatcher'
+  const role: Role = profile.role
+  // A dispatcher lands on My Jobs; everyone else on Work Orders. If the tab
+  // held in state isn't one this role can open (e.g. the default before the
+  // profile loaded), fall back to the landing tab.
+  const landingTab: TabKey = role === 'dispatcher' ? 'jobs' : 'work_orders'
+  const activeTab: TabKey = canAccessTab(role, tab) ? tab : landingTab
 
-  const adminGroups: NavGroup<Tab>[] = [
+  // Every tab that exists, in sidebar order. What each role actually sees is
+  // decided by TAB_ACCESS in lib/permissions.ts -- items a role can't open
+  // are filtered out below, and groups left empty disappear.
+  const allGroups: NavGroup<TabKey>[] = [
     {
       label: 'Workspace',
       items: [
+        { key: 'jobs', label: 'My Jobs', icon: <ClipboardList size={17} /> },
         { key: 'work_orders', label: 'Work Orders', icon: <ClipboardList size={17} /> },
         { key: 'kpi', label: 'KPI Overview', icon: <LayoutGrid size={17} /> },
         { key: 'analytics', label: 'Analytics', icon: <BarChart3 size={17} /> },
@@ -109,89 +111,49 @@ export default function App() {
       label: 'Automation',
       items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} />, badge: liveCallCount.total }],
     },
-    ...(profile.role === 'super_admin'
-      ? [{
-          label: 'Admin',
-          items: [
-            { key: 'users' as Tab, label: 'Manage Users', icon: <Users size={17} /> },
-            { key: 'clients' as Tab, label: 'Client Reports', icon: <Building2 size={17} /> },
-          ],
-        }]
-      : []),
-  ]
-
-  const dispatcherGroups: NavGroup<DispatcherTab>[] = [
     {
-      label: 'Workspace',
+      label: 'Management',
       items: [
-        { key: 'jobs', label: 'My Jobs', icon: <ClipboardList size={17} /> },
-        { key: 'breakdown', label: 'Breakdown', icon: <ClipboardCheck size={17} /> },
-        { key: 'proposals', label: 'Proposals', icon: <FileText size={17} /> },
-        { key: 'price_lists', label: 'Price Lists', icon: <Tags size={17} /> },
-        { key: 'ai_learning', label: 'AI Learning', icon: <Sparkles size={17} /> },
+        { key: 'users', label: 'Manage Users', icon: <Users size={17} /> },
+        { key: 'clients', label: 'Client Reports', icon: <Building2 size={17} /> },
       ],
     },
-    {
-      label: 'Automation',
-      items: [{ key: 'dispatch_agent', label: 'Dispatch Agent', icon: <Phone size={17} />, badge: liveCallCount.total }],
-    },
   ]
+  const navGroups = allGroups
+    .map((g) => ({ ...g, items: g.items.filter((i) => canAccessTab(role, i.key)) }))
+    .filter((g) => g.items.length > 0)
 
-  const sidebarBody = isDispatcherOnly ? (
-    <SidebarNav groups={dispatcherGroups} active={dispatcherTab} onSelect={goDispatcherTab} />
-  ) : (
-    <SidebarNav groups={adminGroups} active={tab} onSelect={goTab} />
-  )
+  const sidebarBody = <SidebarNav groups={navGroups} active={activeTab} onSelect={goTab} />
 
-  const motionKey = location.pathname === '/'
-    ? (isDispatcherOnly ? `d-${dispatcherTab}` : `t-${tab}`)
-    : location.pathname
+  const motionKey = location.pathname === '/' ? `t-${activeTab}` : location.pathname
 
-  const pageContent = isDispatcherOnly ? (
-    <Routes location={location}>
-      <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
-      <Route path="/breakdown/paste" element={<BreakdownPastePage />} />
-      <Route path="/breakdown/:id" element={<BreakdownDetailPage />} />
-      <Route
-        path="*"
-        element={
-          <>
-            {dispatcherTab === 'jobs' && <DispatcherView dispatcherName={profile.dispatcher_name} />}
-            {dispatcherTab === 'breakdown' && <BreakdownPage />}
-            {dispatcherTab === 'proposals' && (
-              <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
-            )}
-            {dispatcherTab === 'price_lists' && <PriceListsPage />}
-            {dispatcherTab === 'ai_learning' && <AiLearningPage />}
-            {dispatcherTab === 'dispatch_agent' && <DispatchAgentPage dispatcherName={profile.dispatcher_name} />}
-          </>
-        }
-      />
-    </Routes>
-  ) : (
+  const pageContent = (
     <Routes location={location}>
       <Route path="/dispatcher/:name" element={<DispatcherDetailPage />} />
-      <Route path="/proposals/:id" element={<ProposalDetailPage role={profile.role} />} />
+      <Route path="/proposals/:id" element={<ProposalDetailPage role={role} />} />
       <Route path="/breakdown/paste" element={<BreakdownPastePage />} />
       <Route path="/breakdown/:id" element={<BreakdownDetailPage />} />
       <Route
         path="*"
         element={
           <>
-            {tab === 'work_orders' && <WorkOrdersPage role={profile.role} />}
-            {tab === 'kpi' && <KPIOverviewPage />}
-            {tab === 'analytics' && <AnalyticsPage />}
-            {tab === 'map' && <MapPage />}
-            {tab === 'breakdown' && <BreakdownPage />}
-            {tab === 'tl_check' && <TeamLeaderCheckPage />}
-            {tab === 'proposals' && (
-              <ProposalsPage role={profile.role} dispatcherName={profile.dispatcher_name} />
+            {activeTab === 'jobs' && <DispatcherView dispatcherName={profile.dispatcher_name} />}
+            {activeTab === 'work_orders' && <WorkOrdersPage role={role} />}
+            {activeTab === 'kpi' && <KPIOverviewPage />}
+            {activeTab === 'analytics' && <AnalyticsPage />}
+            {activeTab === 'map' && <MapPage />}
+            {activeTab === 'breakdown' && <BreakdownPage />}
+            {activeTab === 'tl_check' && <TeamLeaderCheckPage />}
+            {activeTab === 'proposals' && (
+              <ProposalsPage role={role} dispatcherName={profile.dispatcher_name} />
             )}
-            {tab === 'price_lists' && <PriceListsPage />}
-            {tab === 'ai_learning' && <AiLearningPage />}
-            {tab === 'dispatch_agent' && <DispatchAgentPage />}
-            {tab === 'users' && profile.role === 'super_admin' && <ManageUsersPage />}
-            {tab === 'clients' && profile.role === 'super_admin' && <ClientReportsPage />}
+            {activeTab === 'price_lists' && <PriceListsPage role={role} />}
+            {activeTab === 'ai_learning' && <AiLearningPage />}
+            {activeTab === 'dispatch_agent' && (
+              <DispatchAgentPage dispatcherName={role === 'dispatcher' ? profile.dispatcher_name : undefined} />
+            )}
+            {activeTab === 'users' && <ManageUsersPage />}
+            {activeTab === 'clients' && <ClientReportsPage />}
           </>
         }
       />
@@ -206,7 +168,7 @@ export default function App() {
           <BrandMark />
           <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
           <EntitySwitcher />
-          <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
+          <UserCard name={profile.display_name} role={role} onSignOut={signOut} />
         </aside>
 
         {/* Mobile top bar */}
@@ -243,7 +205,7 @@ export default function App() {
                 </div>
                 <div className="flex-1 overflow-y-auto px-3 py-2">{sidebarBody}</div>
                 <EntitySwitcher />
-                <UserCard name={profile.display_name} role={profile.role} onSignOut={signOut} />
+                <UserCard name={profile.display_name} role={role} onSignOut={signOut} />
               </motion.aside>
             </>
           )}
@@ -285,7 +247,7 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
 
 // Lets a super_admin pick which entity's Work Orders, Proposals, AI Learning
 // and Price Lists they're currently viewing and creating under. Hidden for
-// dispatcher/data_entry since RLS already locks them to their own entity.
+// everyone else since RLS already locks them to their own entity.
 function EntitySwitcher() {
   const { switchableEntities, activeEntityId, setActiveEntityId } = useEntityScope()
   if (switchableEntities.length === 0) return null
@@ -305,7 +267,7 @@ function EntitySwitcher() {
   )
 }
 
-function UserCard({ name, role, onSignOut }: { name: string; role: string; onSignOut: () => void }) {
+function UserCard({ name, role, onSignOut }: { name: string; role: Role; onSignOut: () => void }) {
   // Super_admin already sees (and can change) their active entity in the
   // switcher just above this card -- repeating it here would be noise.
   const { activeEntityName, isSuperAdmin } = useEntityScope()
@@ -316,8 +278,8 @@ function UserCard({ name, role, onSignOut }: { name: string; role: string; onSig
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-ink truncate">{name}</p>
-        <p className="text-xs text-ink-faint capitalize truncate">
-          {role.replace('_', ' ')}{!isSuperAdmin && activeEntityName ? ` · ${activeEntityName}` : ''}
+        <p className="text-xs text-ink-faint truncate">
+          {ROLE_LABELS[role] ?? role}{!isSuperAdmin && activeEntityName ? ` · ${activeEntityName}` : ''}
         </p>
       </div>
       <button onClick={onSignOut} className="btn-icon" title="Sign out">

@@ -1,10 +1,15 @@
-export type Role = 'super_admin' | 'data_entry' | 'dispatcher'
+// 'data_entry' is the original catch-all office role; it still works exactly as
+// before for the accounts that have it, but new logins use the five specific
+// roles (see src/lib/permissions.ts for what each one can see and do).
+export type Role = 'super_admin' | 'admin' | 'account_manager' | 'team_leader' | 'dispatcher' | 'data_entry'
 
 export interface Profile {
   id: string
   display_name: string
   role: Role
   dispatcher_name: string | null
+  // Only meaningful for a dispatcher: the Team Leader whose team they're on.
+  team_leader_id?: string | null
   app_ivr: number | null
   system_usage: number | null
   entity_id: string

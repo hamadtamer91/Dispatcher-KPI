@@ -6,6 +6,7 @@ import { STATUS_OPTIONS } from '../lib/types'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { WorkOrderModal } from '../components/WorkOrderModal'
 import { DONE_STATUSES, REASSIGNED_STATUSES } from '../lib/kpi'
+import { canDeleteWorkOrders, canEditWorkOrders } from '../lib/permissions'
 import { Badge, Button, PageHeader } from '../components/ui'
 
 const COLUMNS: (keyof WorkOrder)[] = [
@@ -63,7 +64,10 @@ export function WorkOrdersPage({ role }: { role: Role }) {
   const [showModal, setShowModal] = useState(false)
   const [importMsg, setImportMsg] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const canEdit = role === 'super_admin' || role === 'data_entry'
+  const canEdit = canEditWorkOrders(role)
+  // Deleting is narrower than editing: an Admin can add and change work
+  // orders but only a Super Admin can permanently remove one.
+  const canDelete = canDeleteWorkOrders(role)
 
   const filtered = useMemo(() => {
     if (!search.trim()) return wos
@@ -165,9 +169,11 @@ export function WorkOrdersPage({ role }: { role: Role }) {
                     <button onClick={() => { setEditing(w); setShowModal(true) }} className="btn-icon mr-1">
                       <Pencil size={14} />
                     </button>
-                    <button onClick={() => handleDelete(w.wo)} className="btn-icon hover:text-danger">
-                      <Trash2 size={14} />
-                    </button>
+                    {canDelete && (
+                      <button onClick={() => handleDelete(w.wo)} className="btn-icon hover:text-danger">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </td>
                 )}
               </tr>

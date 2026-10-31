@@ -3,7 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { useWorkOrders } from '../hooks/useWorkOrders'
 import { useProfiles } from '../hooks/useProfiles'
+import { useEntityScope } from '../contexts/EntityScopeContext'
 import { computeDispatcherKPIs } from '../lib/kpi'
+import { kpiScopeNames } from '../lib/permissions'
 import type { WorkOrder } from '../lib/types'
 import { DispatcherStats } from '../components/DispatcherStats'
 import { WorkOrdersMap } from '../components/WorkOrdersMap'
@@ -27,8 +29,10 @@ export function DispatcherDetailPage() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
   const dispatcherName = decodeURIComponent(name ?? '')
+  const { profile: viewer } = useEntityScope()
   const { wos, loading: woLoading } = useWorkOrders()
   const { profiles, loading: pLoading } = useProfiles()
+  const scopeNames = useMemo(() => kpiScopeNames(viewer, profiles), [viewer, profiles])
 
   const mine = useMemo(
     () => wos.filter((w) => w.dispatcher?.trim() === dispatcherName),
@@ -47,14 +51,32 @@ export function DispatcherDetailPage() {
     return <p className="text-sm text-ink-faint py-8 text-center">Loading...</p>
   }
 
+  const backButton = (
+    <button
+      onClick={() => navigate('/')}
+      className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-soft hover:text-ink transition-colors"
+    >
+      <ArrowLeft size={14} /> Back to KPI Overview
+    </button>
+  )
+
+  // A dispatcher can only open their own scorecard and a team leader only a
+  // dispatcher on their team (typing another name into the address bar
+  // doesn't get around it).
+  if (scopeNames && !scopeNames.has(dispatcherName)) {
+    return (
+      <div className="space-y-6">
+        {backButton}
+        <p className="text-sm text-warn bg-warn-tint border border-warn/20 rounded-lg p-4">
+          You don't have access to this dispatcher's scorecard.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      <button
-        onClick={() => navigate('/')}
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-soft hover:text-ink transition-colors"
-      >
-        <ArrowLeft size={14} /> Back to KPI Overview
-      </button>
+      {backButton}
 
       <PageHeader
         title={dispatcherName}
