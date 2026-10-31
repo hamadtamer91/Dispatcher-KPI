@@ -14,13 +14,24 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //   2. Deterministic fixes, applied in code (never trusted to the AI),
 //      MUTATING the parsed line items instead of just flagging a mismatch
 //      -- there's no saved proposal for the dispatcher to go edit by hand,
-//      so the fixed breakdown IS the output. Two kinds:
+//      so the fixed breakdown IS the output. Three kinds:
 //        - Labor rate vs. this job's OWN entity price list (Technician,
-//          Assessment Fee, Helper) -- works for any entity, as long as that
-//          entity has its price list filled in.
-//        - Global Maintenance Network's own contract terms (flat Trip Fee,
-//          every tech/helper gets equal hours, O'Reilly/Bob Evans sales
-//          tax) -- GMN-only, same as audit-proposal.
+//          Helper) -- works for any entity, as long as that entity has its
+//          price list filled in.
+//        - Global Maintenance Network's own contract terms (equal
+//          tech/helper hours, O'Reilly/Bob Evans sales tax) -- GMN-only,
+//          same as audit-proposal.
+//        - Parts pricing: for a billed part whose description names a
+//          model/part number, Gemini (with Google Search enabled) looks up
+//          that model's real current price on the web and corrects it if
+//          meaningfully different. Best-effort -- a part with no
+//          detectable model number, or one the lookup can't confidently
+//          match, is left as pasted.
+//      NEVER corrected, no matter what: Trip Fee and Assessment Fee --
+//      these are the client's already-APPROVED "incurred" charges (see
+//      Incurred Total on the breakdown), agreed before this check ever
+//      runs, so this tool treats them as fixed and leaves them exactly as
+//      pasted even if they don't match the rate sheet.
 //      If the dispatcher gave a Not-To-Exceed ceiling, a fix is only
 //      auto-applied when the result stays at-or-under it; a fix that would
 //      cross the NTE is left unapplied and flagged instead, since crossing
@@ -226,16 +237,20 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
     }
 
     // Index lookups shared by both the generic labor-rate check below and
-    // GMN's own Trip Fee / equal-hours rules further down.
+    // GMN's own equal-hours rule further down. Trip Fee and Assessment Fee
+    // deliberately have NO index lookup here -- neither is ever corrected,
+    // see the "incurred charges" note at the top of this file -- so the
+    // techIdx match below excludes both by name, same as before.
     const tradeName = (body.trade_name ?? '').trim()
     const techIdx = corrected.findIndex((li) => li.kind === 'labor' && !roleMatches(li, /helper/i) && !roleMatches(li, /trip/i) && !roleMatches(li, /assess/i))
-    const assessIdx = corrected.findIndex((li) => roleMatches(li, /assess/i))
     const helperIdx = corrected.findIndex((li) => roleMatches(li, /helper/i))
-    const tripIdx = corrected.findIndex((li) => roleMatches(li, /trip/i))
 
-    // -- Labor rates vs. this job's OWN entity price list (Technician,
-    // Assessment Fee, Helper) -- works for any entity that has its price
-    // list filled in, not just GMN. --
+    // -- Labor rate vs. this job's OWN entity price list (Technician,
+    // Helper) -- works for any entity that has its price list filled in,
+    // not just GMN. Assessment Fee and Trip Fee are deliberately NOT
+    // checked/corrected here: both are "incurred" charges the client has
+    // already approved before this check ever runs, so they're left
+    // exactly as pasted no matter what the rate sheet says. --
     if (body.entity_id) {
       const { data: laborRates } = await supabase
         .from('labor_rates')
@@ -246,29 +261,15 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
         (laborRates ?? []).find((r) => r.role_name.toLowerCase().trim() === roleName.toLowerCase().trim())
 
       const tradeRate = tradeName ? findRate(isEmg ? `${tradeName} (EMG)` : tradeName) : undefined
-      if (tradeRate) {
-        if (techIdx >= 0) {
-          const before = corrected[techIdx].unit_price
-          if (Math.abs(before - tradeRate.hourly_cost) > 0.005) {
-            const delta = round2(corrected[techIdx].quantity * (tradeRate.hourly_cost - before))
-            if (fitsUnderNte(delta)) {
-              corrected[techIdx] = { ...corrected[techIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `${tradeName} labor rate corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list).` }
-              fixesApplied.push({ category: 'rate_sheet', message: corrected[techIdx].note! })
-            } else {
-              withheldForNte(`${tradeName} labor should be corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
-            }
-          }
-        }
-        if (assessIdx >= 0) {
-          const before = corrected[assessIdx].unit_price
-          if (Math.abs(before - tradeRate.hourly_cost) > 0.005) {
-            const delta = round2(corrected[assessIdx].quantity * (tradeRate.hourly_cost - before))
-            if (fitsUnderNte(delta)) {
-              corrected[assessIdx] = { ...corrected[assessIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `Assessment Fee corrected from $${before.toFixed(2)} to $${tradeRate.hourly_cost} (1 hour of ${tradeName}'s labor rate).` }
-              fixesApplied.push({ category: 'rate_sheet', message: corrected[assessIdx].note! })
-            } else {
-              withheldForNte(`Assessment Fee should be corrected from $${before.toFixed(2)} to $${tradeRate.hourly_cost} (1 hour of ${tradeName}'s labor rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
-            }
+      if (tradeRate && techIdx >= 0) {
+        const before = corrected[techIdx].unit_price
+        if (Math.abs(before - tradeRate.hourly_cost) > 0.005) {
+          const delta = round2(corrected[techIdx].quantity * (tradeRate.hourly_cost - before))
+          if (fitsUnderNte(delta)) {
+            corrected[techIdx] = { ...corrected[techIdx], unit_price: tradeRate.hourly_cost, changed: true, note: `${tradeName} labor rate corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list).` }
+            fixesApplied.push({ category: 'rate_sheet', message: corrected[techIdx].note! })
+          } else {
+            withheldForNte(`${tradeName} labor should be corrected from $${before.toFixed(2)}/hr to $${tradeRate.hourly_cost}/hr (${isEmg ? 'EMG' : 'normal'} rate, from the price list), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
           }
         }
       }
@@ -288,26 +289,13 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       }
     }
 
-    // -- Global Maintenance Network's own contract terms: flat Trip Fee,
-    // equal tech/helper hours, and O'Reilly/Bob Evans sales tax. These are
-    // GMN-specific business rules, not price-list lookups, so they stay
-    // gated to GMN jobs only. --
+    // -- Global Maintenance Network's own contract terms: equal
+    // tech/helper hours, and O'Reilly/Bob Evans sales tax. Trip Fee is
+    // deliberately NOT corrected here even though GMN has a flat rate for
+    // it -- same "already-approved incurred charge" rule as Assessment
+    // Fee above. These are GMN-specific business rules, not price-list
+    // lookups, so they stay gated to GMN jobs only. --
     if (isGmn) {
-      // -- Trip Fee --
-      if (tripIdx >= 0) {
-        const expectedTrip = isEmg ? 112.5 : 75
-        const before = corrected[tripIdx].unit_price
-        if (Math.abs(before - expectedTrip) > 0.005) {
-          const delta = round2(corrected[tripIdx].quantity * (expectedTrip - before))
-          if (fitsUnderNte(delta)) {
-            corrected[tripIdx] = { ...corrected[tripIdx], unit_price: expectedTrip, changed: true, note: `Trip Fee corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate, one trip per job).` }
-            fixesApplied.push({ category: 'rate_sheet', message: corrected[tripIdx].note! })
-          } else {
-            withheldForNte(`Trip Fee should be corrected from $${before.toFixed(2)} to $${expectedTrip} (${isEmg ? 'EMG' : 'normal'} rate), but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
-          }
-        }
-      }
-
       // -- Equal hours --
       if (helperIdx >= 0 && techIdx >= 0) {
         const techHours = corrected[techIdx].quantity
@@ -366,6 +354,39 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
       }
     }
 
+    // -- Parts pricing via the web: for a billed part whose description
+    // names a model/part number, ask Gemini (with Google Search enabled)
+    // for that model's current real-world price, and correct the line if
+    // it's meaningfully off. Best-effort and capped at a handful of parts
+    // per check so one pasted proposal can't trigger an unbounded number
+    // of extra AI calls; a part the lookup can't confidently match is left
+    // exactly as pasted (never guessed at). This never touches Trip
+    // Fee/Assessment Fee -- those aren't parts, and are excluded by the
+    // "incurred charges" rule above regardless. --
+    const partsWithModel = corrected
+      .map((li, index) => ({ index, description: li.description, model_number: extractModelNumber(li.description), billed_unit_price: li.unit_price }))
+      .filter((p): p is { index: number; description: string; model_number: string; billed_unit_price: number } => corrected[p.index].kind === 'part' && !!p.model_number)
+      .slice(0, 8)
+
+    if (partsWithModel.length > 0) {
+      const webPrices = await lookupPartPricesOnWeb(partsWithModel)
+      for (const p of partsWithModel) {
+        const found = webPrices.get(p.index)
+        if (!found) continue
+        const before = corrected[p.index].unit_price
+        // Skip rounding noise -- only correct a real, meaningful gap.
+        if (Math.abs(before - found.price) <= Math.max(0.5, before * 0.03)) continue
+        const delta = round2(corrected[p.index].quantity * (found.price - before))
+        if (fitsUnderNte(delta)) {
+          const note = `Price corrected from $${before.toFixed(2)} to $${found.price.toFixed(2)} for "${p.description}" (model/part "${p.model_number}", ${found.confidence} confidence web match${found.note ? ` -- ${found.note}` : ''}). Worth a quick double-check before sending.`
+          corrected[p.index] = { ...corrected[p.index], unit_price: found.price, changed: true, note }
+          fixesApplied.push({ category: 'parts_pricing', message: note })
+        } else {
+          withheldForNte(`"${p.description}" (model "${p.model_number}") should be corrected from $${before.toFixed(2)} to $${found.price.toFixed(2)} per a web price match, but that would push the total over the client's NTE of $${nte!.toFixed(2)} -- left as pasted. Get NTE approval, then run the check again to apply it.`)
+        }
+      }
+    }
+
     const subtotalBefore = round2(originalItems.reduce((s, li) => s + li.quantity * li.unit_price, 0))
     const subtotalAfter = currentTotal()
 
@@ -408,6 +429,86 @@ Pull out the narrative (scope of work, and findings/recommendation if those are 
     return jsonResponse({ error: (e as Error).message ?? 'Unexpected error' }, 500)
   }
 })
+
+// Looks for a model/part number in a billed part's description: an
+// explicit label ("model ABC123", "p/n ABC-123", "sku: ABC123") first,
+// else a standalone alphanumeric token that mixes letters and digits and
+// is long enough to plausibly be a real part number rather than a
+// quantity or unit (e.g. "2x4" or "Rev2" don't qualify; "RG200XLT" does).
+function extractModelNumber(description: string): string | null {
+  const text = description || ''
+  const labeled = text.match(/\b(?:model|mdl|p\/n|pn|part\s*#?|sku)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-/.]{2,})/i)
+  if (labeled) return labeled[1].trim()
+  const tokens = text.match(/\b[A-Za-z0-9][A-Za-z0-9\-/.]{3,}\b/g) || []
+  for (const t of tokens) {
+    const hasLetter = /[A-Za-z]/.test(t)
+    const hasDigit = /[0-9]/.test(t)
+    if (hasLetter && hasDigit && t.replace(/[-/.]/g, '').length >= 4) return t
+  }
+  return null
+}
+
+// One batched Gemini call (with Google Search enabled) covering every
+// part that has a model number, instead of one call per part -- keeps the
+// latency/cost to at most a single extra AI round trip per check. Best
+// effort: any failure (network, malformed response, grounding not
+// available) is swallowed and simply yields no matches, so a lookup
+// problem never blocks the rest of the check.
+async function lookupPartPricesOnWeb(
+  parts: { index: number; description: string; model_number: string; billed_unit_price: number }[],
+): Promise<Map<number, { price: number; confidence: 'high' | 'medium' | 'low'; note: string }>> {
+  const result = new Map<number, { price: number; confidence: 'high' | 'medium' | 'low'; note: string }>()
+  if (parts.length === 0 || !GEMINI_API_KEY) return result
+
+  const listText = parts
+    .map((p) => `${p.index}. "${p.description}" -- model/part number "${p.model_number}", currently billed at $${p.billed_unit_price.toFixed(2)} each`)
+    .join('\n')
+  const prompt = `
+Use web search to look up the current typical retail/market price for each part below, by its model or part number. Reply with ONLY a JSON array, no other text and no markdown code fences, in exactly this shape:
+[{"index": <number>, "found_price": <number, or null if you could not confidently find a real price for this exact model/part number>, "confidence": "high" | "medium" | "low", "source_note": "<very short note on where the price came from, e.g. a retailer or distributor name -- empty string if found_price is null>"}]
+
+Parts to look up:
+${listText}
+
+Only report a price you are reasonably confident is for this exact part/model. If you can't find it, or aren't sure it's the same part, set found_price to null and confidence to "low" -- never guess or estimate a price with no real match behind it.
+`.trim()
+
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), GEMINI_ATTEMPT_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY! },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          tools: [{ google_search: {} }],
+          generationConfig: { maxOutputTokens: 2048 },
+        }),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (!res.ok) return result
+    const json = await res.json()
+    const rawText: string = (json.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('')
+    const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim()
+    const match = cleaned.match(/\[[\s\S]*\]/)
+    if (!match) return result
+    const parsedRows = JSON.parse(match[0]) as { index: number; found_price: number | null; confidence?: 'high' | 'medium' | 'low'; source_note?: string }[]
+    for (const row of parsedRows) {
+      const price = row.found_price
+      if (price != null && !Number.isNaN(Number(price)) && Number(price) > 0 && row.confidence !== 'low') {
+        result.set(row.index, { price: Number(price), confidence: row.confidence ?? 'medium', note: row.source_note || '' })
+      }
+    }
+  } catch {
+    // best-effort only -- never let a lookup failure block the rest of the check
+  }
+  return result
+}
 
 async function geminiErrorMessage(res: Response): Promise<string> {
   if (res.status === 429) return "Gemini's rate limit is maxed out. Wait about a minute before trying again."

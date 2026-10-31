@@ -8,9 +8,20 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //      ceiling (proposal.nte)? Deterministic, same as the pricing math.
 //   3. Global Maintenance Network business rules (gated to that entity,
 //      same constants/logic as generate-proposal/index.ts): sales tax
-//      correctness for O'Reilly/Bob Evans, EMG-vs-normal rate-sheet
-//      correctness, and the equal-hours rule.
-//   4. An AI (Gemini) read of whether the line items actually match the
+//      correctness for O'Reilly/Bob Evans and EMG-vs-normal rate-sheet
+//      correctness for Technician/Helper, plus the equal-hours rule.
+//      Deliberately does NOT flag Trip Fee or Assessment Fee against the
+//      rate sheet -- both are "incurred" charges the client has already
+//      approved before this check ever runs (see Incurred Total on the
+//      breakdown), so they're treated as fixed regardless of what the rate
+//      sheet says, and this tool never second-guesses them.
+//   4. Parts pricing -- for a billed part whose description names a
+//      model/part number, an AI (Gemini, with Google Search enabled) looks
+//      up that model's real current price on the web and flags it if the
+//      billed price looks meaningfully off. Flag-only, like everything
+//      else here -- nothing is auto-corrected since this function never
+//      writes to the database.
+//   5. An AI (Gemini) read of whether the line items actually match the
 //      scope described in the narrative -- e.g. narrative says "repaired
 //      the door" but a line item bills a brand-new door -- PLUS, using the
 //      same AI Learning history (quote_outcomes) generate-proposal pricing
@@ -204,7 +215,10 @@ Deno.serve(async (req) => {
         })
       }
 
-      // -- EMG vs. normal rate-sheet correctness --
+      // -- EMG vs. normal rate-sheet correctness for Technician/Helper
+      // only. Assessment Fee and Trip Fee are deliberately skipped here --
+      // both are "incurred" charges already approved by the client, so
+      // this check never flags them against the rate sheet. --
       if (tradeName && tradeName.trim()) {
         const { data: laborRates } = await supabase
           .from('labor_rates')
@@ -215,37 +229,20 @@ Deno.serve(async (req) => {
           (laborRates ?? []).find((r) => r.role_name.toLowerCase().trim() === roleName.toLowerCase().trim())
         const tradeRate = findRate(isEmg ? `${tradeName.trim()} (EMG)` : tradeName.trim())
         const helperRate = findRate(isEmg ? 'Helper (EMG)' : 'Helper')
-        const expectedTrip = isEmg ? 112.5 : 75
         const priorityLabel = proposal.priority ?? '(none set -- defaults to normal rate)'
 
-        if (tradeRate) {
-          if (proposal.technician_rate != null && Math.abs(Number(proposal.technician_rate) - tradeRate.hourly_cost) > 0.005) {
-            findings.push({
-              severity: 'medium',
-              category: 'rate_sheet',
-              message: `Priority "${priorityLabel}" means ${isEmg ? 'EMG' : 'normal'} rates for ${tradeName}. Technician Rate should be $${tradeRate.hourly_cost}/hr, but it's set to $${Number(proposal.technician_rate).toFixed(2)}/hr.`,
-            })
-          }
-          if (proposal.assessment_fee != null && Math.abs(Number(proposal.assessment_fee) - tradeRate.hourly_cost) > 0.005) {
-            findings.push({
-              severity: 'low',
-              category: 'rate_sheet',
-              message: `Assessment Fee should equal 1 hour of ${tradeName}'s labor rate ($${tradeRate.hourly_cost}), but it's set to $${Number(proposal.assessment_fee).toFixed(2)}.`,
-            })
-          }
+        if (tradeRate && proposal.technician_rate != null && Math.abs(Number(proposal.technician_rate) - tradeRate.hourly_cost) > 0.005) {
+          findings.push({
+            severity: 'medium',
+            category: 'rate_sheet',
+            message: `Priority "${priorityLabel}" means ${isEmg ? 'EMG' : 'normal'} rates for ${tradeName}. Technician Rate should be $${tradeRate.hourly_cost}/hr, but it's set to $${Number(proposal.technician_rate).toFixed(2)}/hr.`,
+          })
         }
         if (helperRate && proposal.helper_rate != null && Math.abs(Number(proposal.helper_rate) - helperRate.hourly_cost) > 0.005) {
           findings.push({
             severity: 'low',
             category: 'rate_sheet',
             message: `Helper Rate should be $${helperRate.hourly_cost}/hr at ${isEmg ? 'EMG' : 'normal'} rates, but it's set to $${Number(proposal.helper_rate).toFixed(2)}/hr.`,
-          })
-        }
-        if (proposal.trip_fee != null && Math.abs(Number(proposal.trip_fee) - expectedTrip) > 0.005) {
-          findings.push({
-            severity: 'medium',
-            category: 'rate_sheet',
-            message: `Priority "${priorityLabel}" means ${isEmg ? 'EMG' : 'normal'} rates, so Trip Fee should be $${expectedTrip}, but it's set to $${Number(proposal.trip_fee).toFixed(2)}.`,
           })
         }
       }
@@ -271,13 +268,38 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ---- 4. AI Learning: pull the same real approved/rejected/revision
+    // ---- 4. Parts pricing via the web: for a billed part whose
+    // description names a model/part number, ask Gemini (with Google
+    // Search enabled) for that model's current real-world price, and flag
+    // it if the billed price looks meaningfully off. Flag-only -- this
+    // function never writes to the database, so nothing is auto-corrected
+    // here the way it is in audit-proposal-text; the dispatcher applies
+    // the fix by hand in the proposal editor if they agree with it. ----
+    const partsWithModel = lineItems
+      .map((li) => ({ id: li.id, description: li.description, model_number: extractModelNumber(li.description), billed_unit_price: Number(li.unit_price) }))
+      .filter((p): p is { id: string; description: string; model_number: string; billed_unit_price: number } => lineItems.find((li) => li.id === p.id)?.kind === 'part' && !!p.model_number)
+      .slice(0, 8)
+    if (partsWithModel.length > 0) {
+      const webPrices = await lookupPartPricesOnWeb(partsWithModel)
+      for (const p of partsWithModel) {
+        const found = webPrices.get(p.id)
+        if (!found) continue
+        if (Math.abs(p.billed_unit_price - found.price) <= Math.max(0.5, p.billed_unit_price * 0.03)) continue
+        findings.push({
+          severity: 'low',
+          category: 'parts_pricing',
+          message: `"${p.description}" (model/part "${p.model_number}") is billed at $${p.billed_unit_price.toFixed(2)}, but a web price match (${found.confidence} confidence${found.note ? `, ${found.note}` : ''}) found it closer to $${found.price.toFixed(2)}. Worth double-checking and updating the line item if that's right.`,
+        })
+      }
+    }
+
+    // ---- 5. AI Learning: pull the same real approved/rejected/revision
     // history generate-proposal calibrates pricing against, so the model
     // below can judge this total against what's actually gotten through
     // for this client/trade, not just the narrative in isolation.
     const { contextText: outcomesContext, scopeLabel: outcomesScopeLabel, n: outcomesN } = await fetchOutcomeContext(supabase, client, tradeName)
 
-    // ---- 5. AI check: does the narrative actually match what's being
+    // ---- 6. AI check: does the narrative actually match what's being
     // billed, and does the price look like it'll face the kind of pushback
     // this client/trade has a track record of giving? Applies to any
     // entity, not just GMN.
@@ -325,7 +347,7 @@ Look specifically for:
 4. Whether this total, or the hours/parts behind it, looks like it resembles patterns this client/trade has previously rejected or asked to revise (per the history above) -- e.g. similar hours for a similar job that got pushed back. Category: "pricing_risk". Do not flag this just for being close to the NTE -- NTE is checked separately; only flag a real resemblance to a past rejection pattern.
 5. Any other clear inconsistency. Category: "other".
 
-Do not flag normal incidentals (disposal, minor hardware, trip/assessment fees, sales tax) as mismatches. Do not re-judge whether the price is fair in the abstract -- only scope-vs-billing consistency and resemblance to real rejection history. If everything lines up, return an empty findings array and say so in overall_assessment.
+Do not flag the Trip Fee, Assessment Fee, or any other incurred charge -- these are costs the client has already approved before this proposal was even written, so they are never in question here, no matter what they're billed at. Do not flag normal incidentals (disposal, minor hardware, sales tax) as mismatches either. Do not re-judge whether the price is fair in the abstract -- only scope-vs-billing consistency and resemblance to real rejection history. If everything lines up, return an empty findings array and say so in overall_assessment.
 `.trim()
 
       const responseSchema = {
@@ -384,6 +406,86 @@ Do not flag normal incidentals (disposal, minor hardware, trip/assessment fees, 
     return jsonResponse({ error: (e as Error).message ?? 'Unexpected error' }, 500)
   }
 })
+
+// Looks for a model/part number in a billed part's description: an
+// explicit label ("model ABC123", "p/n ABC-123", "sku: ABC123") first,
+// else a standalone alphanumeric token that mixes letters and digits and
+// is long enough to plausibly be a real part number rather than a
+// quantity or unit (e.g. "2x4" or "Rev2" don't qualify; "RG200XLT" does).
+function extractModelNumber(description: string): string | null {
+  const text = description || ''
+  const labeled = text.match(/\b(?:model|mdl|p\/n|pn|part\s*#?|sku)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-/.]{2,})/i)
+  if (labeled) return labeled[1].trim()
+  const tokens = text.match(/\b[A-Za-z0-9][A-Za-z0-9\-/.]{3,}\b/g) || []
+  for (const t of tokens) {
+    const hasLetter = /[A-Za-z]/.test(t)
+    const hasDigit = /[0-9]/.test(t)
+    if (hasLetter && hasDigit && t.replace(/[-/.]/g, '').length >= 4) return t
+  }
+  return null
+}
+
+// One batched Gemini call (with Google Search enabled) covering every
+// billed part that has a model number, instead of one call per part.
+// Best effort: any failure (network, malformed response, grounding not
+// available) is swallowed and simply yields no matches, so a lookup
+// problem never blocks the rest of the check.
+async function lookupPartPricesOnWeb(
+  parts: { id: string; description: string; model_number: string; billed_unit_price: number }[],
+): Promise<Map<string, { price: number; confidence: 'high' | 'medium' | 'low'; note: string }>> {
+  const result = new Map<string, { price: number; confidence: 'high' | 'medium' | 'low'; note: string }>()
+  if (parts.length === 0 || !GEMINI_API_KEY) return result
+
+  const listText = parts
+    .map((p, i) => `${i}. "${p.description}" -- model/part number "${p.model_number}", currently billed at $${p.billed_unit_price.toFixed(2)} each`)
+    .join('\n')
+  const prompt = `
+Use web search to look up the current typical retail/market price for each part below, by its model or part number. Reply with ONLY a JSON array, no other text and no markdown code fences, in exactly this shape:
+[{"index": <number>, "found_price": <number, or null if you could not confidently find a real price for this exact model/part number>, "confidence": "high" | "medium" | "low", "source_note": "<very short note on where the price came from, e.g. a retailer or distributor name -- empty string if found_price is null>"}]
+
+Parts to look up:
+${listText}
+
+Only report a price you are reasonably confident is for this exact part/model. If you can't find it, or aren't sure it's the same part, set found_price to null and confidence to "low" -- never guess or estimate a price with no real match behind it.
+`.trim()
+
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), GEMINI_ATTEMPT_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY! },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          tools: [{ google_search: {} }],
+          generationConfig: { maxOutputTokens: 2048 },
+        }),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (!res.ok) return result
+    const json = await res.json()
+    const rawText: string = (json.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? '').join('')
+    const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim()
+    const match = cleaned.match(/\[[\s\S]*\]/)
+    if (!match) return result
+    const parsedRows = JSON.parse(match[0]) as { index: number; found_price: number | null; confidence?: 'high' | 'medium' | 'low'; source_note?: string }[]
+    for (const row of parsedRows) {
+      const part = parts[row.index]
+      const price = row.found_price
+      if (part && price != null && !Number.isNaN(Number(price)) && Number(price) > 0 && row.confidence !== 'low') {
+        result.set(part.id, { price: Number(price), confidence: row.confidence ?? 'medium', note: row.source_note || '' })
+      }
+    }
+  } catch {
+    // best-effort only -- never let a lookup failure block the rest of the check
+  }
+  return result
+}
 
 // Same cascade generate-proposal uses to calibrate pricing: client+trade,
 // falling back to client-only, then trade-only, then everything, until

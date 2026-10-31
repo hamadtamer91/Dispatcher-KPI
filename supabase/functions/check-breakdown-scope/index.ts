@@ -146,7 +146,7 @@ Look specifically for:
 5. Whether this total, or the hours/parts behind it, resembles patterns this client/trade has previously rejected or asked to revise (per the history above). Category: "pricing_risk". Do not flag this just for being close to the NTE -- that's checked separately; only flag a real resemblance to a past rejection pattern.
 6. Any other clear inconsistency. Category: "other".
 
-If everything lines up, return an empty findings array and say so in overall_assessment.
+Never flag or suggest any change to the Trip Fee, Assessment Fee, or any other "incurred" charge -- these are costs the client has already approved before this proposal was even checked, so they are always out of scope here, no matter what they're billed at or how they compare to a rate sheet. If everything else lines up, return an empty findings array and say so in overall_assessment.
 `.trim()
     const scopeSchema = {
       type: 'OBJECT',
